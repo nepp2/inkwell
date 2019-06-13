@@ -1,5 +1,5 @@
 use libc::c_int;
-use llvm_sys::execution_engine::{LLVMGetExecutionEngineTargetData, LLVMExecutionEngineRef, LLVMRunFunction, LLVMRunFunctionAsMain, LLVMDisposeExecutionEngine, LLVMGetFunctionAddress, LLVMAddModule, LLVMFindFunction, LLVMLinkInMCJIT, LLVMLinkInInterpreter, LLVMRemoveModule, LLVMGenericValueRef, LLVMFreeMachineCodeForFunction, LLVMAddGlobalMapping, LLVMRunStaticConstructors, LLVMRunStaticDestructors};
+use llvm_sys::execution_engine::{LLVMGetExecutionEngineTargetData, LLVMExecutionEngineRef, LLVMRunFunction, LLVMRunFunctionAsMain, LLVMDisposeExecutionEngine, LLVMGetFunctionAddress, LLVMGetGlobalValueAddress, LLVMAddModule, LLVMFindFunction, LLVMLinkInMCJIT, LLVMLinkInInterpreter, LLVMRemoveModule, LLVMGenericValueRef, LLVMFreeMachineCodeForFunction, LLVMAddGlobalMapping, LLVMRunStaticConstructors, LLVMRunStaticDestructors};
 
 use crate::context::Context;
 use crate::module::Module;
@@ -342,6 +342,28 @@ impl ExecutionEngine {
             _execution_engine: execution_engine.clone(),
             inner: transmute_copy(&address),
         })
+    }
+
+    /// Try to load a function address from the execution engine
+    pub unsafe fn get_function_address<F>(&self, fn_name: &str) -> Option<u64>
+    {
+        let c_string = CString::new(fn_name).expect("Conversion to CString failed unexpectedly");
+        let address = LLVMGetFunctionAddress(self.execution_engine_inner(), c_string.as_ptr());
+        if address == 0 {
+            return None
+        }
+        Some(address)
+    }
+
+    /// Try to load a global variable address from the execution engine
+    pub unsafe fn get_global_address<F>(&self, global_name: &str) -> Option<u64>
+    {
+        let c_string = CString::new(global_name).expect("Conversion to CString failed unexpectedly");
+        let address = LLVMGetGlobalValueAddress(self.execution_engine_inner(), c_string.as_ptr());
+        if address == 0 {
+            return None
+        }
+        Some(address)
     }
 
     // REVIEW: Not sure if an EE's target data can change.. if so we might want to update the value

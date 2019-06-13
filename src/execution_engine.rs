@@ -338,7 +338,7 @@ impl ExecutionEngine {
     }
 
     /// Try to load a function address from the execution engine
-    pub unsafe fn get_function_address<F>(&self, fn_name: &str) -> Option<u64>
+    pub unsafe fn get_function_address(&self, fn_name: &str) -> Option<u64>
     {
         let c_string = CString::new(fn_name).expect("Conversion to CString failed unexpectedly");
         let address = LLVMGetFunctionAddress(self.execution_engine_inner(), c_string.as_ptr());
@@ -349,7 +349,7 @@ impl ExecutionEngine {
     }
 
     /// Try to load a global variable address from the execution engine
-    pub unsafe fn get_global_address<F>(&self, global_name: &str) -> Option<u64>
+    pub unsafe fn get_global_address(&self, global_name: &str) -> Option<u64>
     {
         let c_string = CString::new(global_name).expect("Conversion to CString failed unexpectedly");
         let address = LLVMGetGlobalValueAddress(self.execution_engine_inner(), c_string.as_ptr());

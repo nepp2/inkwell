@@ -1,7 +1,7 @@
 //! A `BasicBlock` is a container of instructions.
 
 use llvm_sys::core::{LLVMGetBasicBlockParent, LLVMGetBasicBlockTerminator, LLVMGetNextBasicBlock, LLVMInsertBasicBlock, LLVMIsABasicBlock, LLVMIsConstant, LLVMMoveBasicBlockAfter, LLVMMoveBasicBlockBefore, LLVMPrintTypeToString, LLVMPrintValueToString, LLVMTypeOf, LLVMDeleteBasicBlock, LLVMGetPreviousBasicBlock, LLVMRemoveBasicBlockFromParent, LLVMGetFirstInstruction, LLVMGetLastInstruction, LLVMGetTypeContext, LLVMBasicBlockAsValue};
-#[llvm_versions(3.9 => latest)]
+#[llvm_versions(3.9..=latest)]
 use llvm_sys::core::LLVMGetBasicBlockName;
 use llvm_sys::prelude::{LLVMValueRef, LLVMBasicBlockRef};
 
@@ -19,7 +19,7 @@ use std::rc::Rc;
 /// A well formed `BasicBlock` is a list of non terminating instructions followed by a single terminating
 /// instruction. `BasicBlock`s are allowed to be malformed prior to running validation because it may be useful
 /// when constructing or modifying a program.
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone, Copy, Hash)]
 pub struct BasicBlock {
     pub(crate) basic_block: LLVMBasicBlockRef,
 }
@@ -95,6 +95,10 @@ impl BasicBlock {
     /// assert_eq!(basic_block3.get_previous_basic_block().unwrap(), basic_block2);
     /// ```
     pub fn get_previous_basic_block(&self) -> Option<BasicBlock> {
+        if self.get_parent().is_none() {
+            return None;
+        }
+
         let bb = unsafe {
             LLVMGetPreviousBasicBlock(self.basic_block)
         };
@@ -130,6 +134,10 @@ impl BasicBlock {
     /// assert!(basic_block3.get_next_basic_block().is_none());
     /// ```
     pub fn get_next_basic_block(&self) -> Option<BasicBlock> {
+        if self.get_parent().is_none() {
+            return None;
+        }
+
         let bb = unsafe {
             LLVMGetNextBasicBlock(self.basic_block)
         };
@@ -138,6 +146,7 @@ impl BasicBlock {
     }
 
     /// Prepends one `BasicBlock` before another.
+    /// It returns `Err(())` when either `BasicBlock` has no parent, as LLVM assumes they both have parents.
     ///
     /// # Example
     /// ```no_run
@@ -160,13 +169,21 @@ impl BasicBlock {
     /// assert_eq!(basic_block2.get_next_basic_block().unwrap(), basic_block1);
     /// ```
     // REVIEW: What happens if blocks are from different scopes?
-    pub fn move_before(&self, basic_block: &BasicBlock) {
+    pub fn move_before(&self, basic_block: &BasicBlock) -> Result<(), ()> {
+        // This method is UB if the parent no longer exists, so we must check for parent (or encode into type system)
+        if self.get_parent().is_none() || basic_block.get_parent().is_none() {
+            return Err(());
+        }
+
         unsafe {
             LLVMMoveBasicBlockBefore(self.basic_block, basic_block.basic_block)
         }
+
+        Ok(())
     }
 
     /// Appends one `BasicBlock` after another.
+    /// It returns `Err(())` when either `BasicBlock` has no parent, as LLVM assumes they both have parents.
     ///
     /// # Example
     /// ```no_run
@@ -189,10 +206,17 @@ impl BasicBlock {
     /// assert_eq!(basic_block2.get_next_basic_block().unwrap(), basic_block1);
     /// ```
     // REVIEW: What happens if blocks are from different scopes?
-    pub fn move_after(&self, basic_block: &BasicBlock) {
+    pub fn move_after(&self, basic_block: &BasicBlock) -> Result<(), ()> {
+        // This method is UB if the parent no longer exists, so we must check for parent (or encode into type system)
+        if self.get_parent().is_none() || basic_block.get_parent().is_none() {
+            return Err(());
+        }
+
         unsafe {
             LLVMMoveBasicBlockAfter(self.basic_block, basic_block.basic_block)
         }
+
+        Ok(())
     }
 
     /// Prepends a new `BasicBlock` before this one.
@@ -331,7 +355,8 @@ impl BasicBlock {
         Some(InstructionValue::new(value))
     }
 
-    /// Removes this `BasicBlock` from its parent `FunctionValue`. Does nothing if it has no parent.
+    /// Removes this `BasicBlock` from its parent `FunctionValue`.
+    /// It returns `Err(())` when it has no parent to remove from.
     ///
     /// # Example
     /// ```no_run
@@ -356,16 +381,21 @@ impl BasicBlock {
     // by taking ownership of self (though BasicBlock's are not uniquely obtained...)
     // might have to make some methods do something like -> Result<..., BasicBlock<Orphan>> for BasicBlock<HasParent>
     // and would move_before/after make it no longer orphaned? etc..
-    pub fn remove_from_function(&self) {
+    pub fn remove_from_function(&self) -> Result<(), ()> {
         // This method is UB if the parent no longer exists, so we must check for parent (or encode into type system)
-        if self.get_parent().is_some() {
-            unsafe {
-                LLVMRemoveBasicBlockFromParent(self.basic_block)
-            }
+        if self.get_parent().is_none() {
+            return Err(());
         }
+
+        unsafe {
+            LLVMRemoveBasicBlockFromParent(self.basic_block)
+        }
+
+        Ok(())
     }
 
     /// Removes this `BasicBlock` completely from memory. This is unsafe because you could easily have other references to the same `BasicBlock`.
+    /// It returns `Err(())` when it has no parent to delete from, as LLVM assumes it has a parent.
     ///
     /// # Example
     /// ```no_run
@@ -385,11 +415,15 @@ impl BasicBlock {
     /// }
     /// assert!(function.get_basic_blocks().is_empty());
     /// ```
-    // REVIEW: Could potentially be unsafe if there are existing references. Might need a global ref counter
-    pub unsafe fn delete(self) {
-        // unsafe {
-        LLVMDeleteBasicBlock(self.basic_block)
-        // }
+    pub unsafe fn delete(self) -> Result<(), ()> {
+        // This method is UB if the parent no longer exists, so we must check for parent (or encode into type system)
+        if self.get_parent().is_none() {
+            return Err(());
+        }
+
+        LLVMDeleteBasicBlock(self.basic_block);
+
+        Ok(())
     }
 
     /// Obtains the `ContextRef` this `BasicBlock` belongs to.
@@ -436,7 +470,7 @@ impl BasicBlock {
     ///
     /// assert_eq!(*bb.get_name(), *CString::new("entry").unwrap());
     /// ```
-    #[llvm_versions(3.9 => latest)]
+    #[llvm_versions(3.9..=latest)]
     pub fn get_name(&self) -> &CStr {
         let ptr = unsafe {
             LLVMGetBasicBlockName(self.basic_block)

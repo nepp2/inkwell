@@ -4,13 +4,13 @@ use llvm_sys::prelude::{LLVMPassManagerRef, LLVMPassRegistryRef};
 use llvm_sys::transforms::ipo::{LLVMAddArgumentPromotionPass, LLVMAddConstantMergePass, LLVMAddDeadArgEliminationPass, LLVMAddFunctionAttrsPass, LLVMAddFunctionInliningPass, LLVMAddAlwaysInlinerPass, LLVMAddGlobalDCEPass, LLVMAddGlobalOptimizerPass, LLVMAddIPConstantPropagationPass, LLVMAddIPSCCPPass, LLVMAddInternalizePass, LLVMAddStripDeadPrototypesPass, LLVMAddPruneEHPass, LLVMAddStripSymbolsPass};
 use llvm_sys::transforms::pass_manager_builder::{LLVMPassManagerBuilderRef, LLVMPassManagerBuilderCreate, LLVMPassManagerBuilderDispose, LLVMPassManagerBuilderSetOptLevel, LLVMPassManagerBuilderSetSizeLevel, LLVMPassManagerBuilderSetDisableUnitAtATime, LLVMPassManagerBuilderSetDisableUnrollLoops, LLVMPassManagerBuilderSetDisableSimplifyLibCalls, LLVMPassManagerBuilderUseInlinerWithThreshold, LLVMPassManagerBuilderPopulateFunctionPassManager, LLVMPassManagerBuilderPopulateModulePassManager, LLVMPassManagerBuilderPopulateLTOPassManager};
 use llvm_sys::transforms::scalar::{LLVMAddAggressiveDCEPass, LLVMAddMemCpyOptPass, LLVMAddAlignmentFromAssumptionsPass, LLVMAddCFGSimplificationPass, LLVMAddDeadStoreEliminationPass, LLVMAddScalarizerPass, LLVMAddMergedLoadStoreMotionPass, LLVMAddGVNPass, LLVMAddIndVarSimplifyPass, LLVMAddInstructionCombiningPass, LLVMAddJumpThreadingPass, LLVMAddLICMPass, LLVMAddLoopDeletionPass, LLVMAddLoopIdiomPass, LLVMAddLoopRotatePass, LLVMAddLoopRerollPass, LLVMAddLoopUnrollPass, LLVMAddLoopUnswitchPass, LLVMAddPartiallyInlineLibCallsPass, LLVMAddSCCPPass, LLVMAddScalarReplAggregatesPass, LLVMAddScalarReplAggregatesPassSSA, LLVMAddScalarReplAggregatesPassWithThreshold, LLVMAddSimplifyLibCallsPass, LLVMAddTailCallEliminationPass, LLVMAddConstantPropagationPass, LLVMAddDemoteMemoryToRegisterPass, LLVMAddVerifierPass, LLVMAddCorrelatedValuePropagationPass, LLVMAddEarlyCSEPass, LLVMAddLowerExpectIntrinsicPass, LLVMAddTypeBasedAliasAnalysisPass, LLVMAddScopedNoAliasAAPass, LLVMAddBasicAliasAnalysisPass, LLVMAddReassociatePass};
-#[llvm_versions(3.7 => latest)]
+#[llvm_versions(3.7..=latest)]
 use llvm_sys::transforms::scalar::LLVMAddBitTrackingDCEPass;
 use llvm_sys::transforms::vectorize::{LLVMAddLoopVectorizePass, LLVMAddSLPVectorizePass};
 
 use crate::OptimizationLevel;
 use crate::module::Module;
-#[llvm_versions(3.6 => 3.8)]
+#[llvm_versions(3.6..=3.8)]
 use crate::targets::TargetData;
 use crate::values::{AsValueRef, FunctionValue};
 
@@ -82,7 +82,7 @@ impl PassManagerBuilder {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```no_run
     /// use inkwell::OptimizationLevel::Aggressive;
     /// use inkwell::module::Module;
     /// use inkwell::passes::{PassManager, PassManagerBuilder};
@@ -107,10 +107,13 @@ impl PassManagerBuilder {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```no_run
     /// use inkwell::OptimizationLevel::Aggressive;
     /// use inkwell::passes::{PassManager, PassManagerBuilder};
+    /// use inkwell::targets::{InitializationConfig, Target};
     ///
+    /// let config = InitializationConfig::default();
+    /// Target::initialize_native(&config).unwrap();
     /// let pass_manager_builder = PassManagerBuilder::create();
     ///
     /// pass_manager_builder.set_optimization_level(Aggressive);
@@ -130,10 +133,13 @@ impl PassManagerBuilder {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```no_run
     /// use inkwell::OptimizationLevel::Aggressive;
     /// use inkwell::passes::{PassManager, PassManagerBuilder};
+    /// use inkwell::targets::{InitializationConfig, Target};
     ///
+    /// let config = InitializationConfig::default();
+    /// Target::initialize_native(&config).unwrap();
     /// let pass_manager_builder = PassManagerBuilder::create();
     ///
     /// pass_manager_builder.set_optimization_level(Aggressive);
@@ -203,6 +209,21 @@ pub struct PassManager<T> {
     sub_type: PhantomData<T>,
 }
 
+impl PassManager<FunctionValue> {
+    // return true means some pass modified the module, not an error occurred
+    pub fn initialize(&self) -> bool {
+        unsafe {
+            LLVMInitializeFunctionPassManager(self.pass_manager) == 1
+        }
+    }
+
+    pub fn finalize(&self) -> bool {
+        unsafe {
+            LLVMFinalizeFunctionPassManager(self.pass_manager) == 1
+        }
+    }
+}
+
 impl<T: PassManagerSubType> PassManager<T> {
     pub(crate) fn new(pass_manager: LLVMPassManagerRef) -> Self {
         assert!(!pass_manager.is_null());
@@ -221,19 +242,6 @@ impl<T: PassManagerSubType> PassManager<T> {
         PassManager::new(pass_manager)
     }
 
-    // return true means some pass modified the module, not an error occurred
-    pub fn initialize(&self) -> bool {
-        unsafe {
-            LLVMInitializeFunctionPassManager(self.pass_manager) == 1
-        }
-    }
-
-    pub fn finalize(&self) -> bool {
-        unsafe {
-            LLVMFinalizeFunctionPassManager(self.pass_manager) == 1
-        }
-    }
-
     /// This method returns true if any of the passes modified the function or module
     /// and false otherwise.
     pub fn run_on(&self, input: &T) -> bool {
@@ -242,7 +250,7 @@ impl<T: PassManagerSubType> PassManager<T> {
         }
     }
 
-    #[llvm_versions(3.6 => 3.8)]
+    #[llvm_versions(3.6..=3.8)]
     pub fn add_target_data(&self, target_data: &TargetData) {
         use llvm_sys::target::LLVMAddTargetData;
 
@@ -427,7 +435,7 @@ impl<T: PassManagerSubType> PassManager<T> {
     /// for each pair of compatible instructions. These heuristics
     /// are intended to prevent vectorization in cases where it would
     /// not yield a performance increase of the resulting code.
-    #[llvm_versions(3.6 => 6.0)]
+    #[llvm_versions(3.6..=4.0)]
     pub fn add_bb_vectorize_pass(&self) {
         use llvm_sys::transforms::vectorize::LLVMAddBBVectorizePass;
 
@@ -461,7 +469,7 @@ impl<T: PassManagerSubType> PassManager<T> {
         }
     }
 
-    #[llvm_versions(3.7 => latest)]
+    #[llvm_versions(3.7..=latest)]
     /// No LLVM documentation is available at this time.
     pub fn add_bit_tracking_dce_pass(&self) {
         unsafe {
@@ -523,7 +531,7 @@ impl<T: PassManagerSubType> PassManager<T> {
     /// performs redundant load elimination.
     // REVIEW: Is `LLVMAddGVNPass` deprecated? Should we just seemlessly replace
     // the old one with this one in 4.0+?
-    #[llvm_versions(4.0 => latest)]
+    #[llvm_versions(4.0..=latest)]
     pub fn add_new_gvn_pass(&self) {
         use llvm_sys::transforms::scalar::LLVMAddNewGVNPass;
 
@@ -778,9 +786,9 @@ impl<T: PassManagerSubType> PassManager<T> {
     /// which allows targets to get away with not implementing the
     /// switch instruction until it is convenient.
     pub fn add_lower_switch_pass(&self) {
-        #[llvm_versions(3.6 => 6.0)]
+        #[llvm_versions(3.6..=6.0)]
         use llvm_sys::transforms::scalar::LLVMAddLowerSwitchPass;
-        #[llvm_versions(7.0 => latest)]
+        #[llvm_versions(7.0..=latest)]
         use llvm_sys::transforms::util::LLVMAddLowerSwitchPass;
 
         unsafe {
@@ -795,9 +803,9 @@ impl<T: PassManagerSubType> PassManager<T> {
     /// order to rewrite loads and stores as appropriate. This is just
     /// the standard SSA construction algorithm to construct "pruned" SSA form.
     pub fn add_promote_memory_to_register_pass(&self) {
-        #[llvm_versions(3.6 => 6.0)]
+        #[llvm_versions(3.6..7.0)]
         use llvm_sys::transforms::scalar::LLVMAddPromoteMemoryToRegisterPass;
-        #[llvm_versions(7.0 => latest)]
+        #[llvm_versions(7.0..=latest)]
         use llvm_sys::transforms::util::LLVMAddPromoteMemoryToRegisterPass;
 
         unsafe {
@@ -1000,7 +1008,7 @@ impl<T: PassManagerSubType> PassManager<T> {
         }
     }
 
-    #[llvm_versions(4.0 => latest)]
+    #[llvm_versions(4.0..=latest)]
     /// No LLVM documentation is available at this time.
     pub fn add_early_cse_mem_ssa_pass(&self) {
         use llvm_sys::transforms::scalar::LLVMAddEarlyCSEMemSSAPass;
@@ -1040,21 +1048,60 @@ impl<T: PassManagerSubType> PassManager<T> {
         }
     }
 
-    #[llvm_versions(7.0 => latest)]
+    #[llvm_versions(7.0..=latest)]
     pub fn add_aggressive_inst_combiner_pass(&self) {
+        #[cfg(feature = "llvm7-0")]
         use llvm_sys::transforms::scalar::LLVMAddAggressiveInstCombinerPass;
+        #[cfg(not(feature = "llvm7-0"))]
+        use llvm_sys::transforms::aggressive_instcombine::LLVMAddAggressiveInstCombinerPass;
 
         unsafe {
             LLVMAddAggressiveInstCombinerPass(self.pass_manager)
         }
     }
 
-    #[llvm_versions(7.0 => latest)]
+    #[llvm_versions(7.0..=latest)]
     pub fn add_loop_unroll_and_jam_pass(&self) {
         use llvm_sys::transforms::scalar::LLVMAddLoopUnrollAndJamPass;
 
         unsafe {
             LLVMAddLoopUnrollAndJamPass(self.pass_manager)
+        }
+    }
+
+    #[llvm_versions(8.0..=latest)]
+    pub fn add_coroutine_early_pass(&self) {
+        use llvm_sys::transforms::coroutines::LLVMAddCoroEarlyPass;
+
+        unsafe {
+            LLVMAddCoroEarlyPass(self.pass_manager)
+        }
+    }
+
+    #[llvm_versions(8.0..=latest)]
+    pub fn add_coroutine_split_pass(&self) {
+        use llvm_sys::transforms::coroutines::LLVMAddCoroSplitPass;
+
+        unsafe {
+            LLVMAddCoroSplitPass(self.pass_manager)
+        }
+    }
+
+    #[llvm_versions(8.0..=latest)]
+    pub fn add_coroutine_elide_pass(&self) {
+        use llvm_sys::transforms::coroutines::LLVMAddCoroElidePass;
+
+        unsafe {
+            LLVMAddCoroElidePass(self.pass_manager)
+        }
+    }
+
+    #[llvm_versions(8.0..=latest)]
+    pub fn add_coroutine_cleanup_pass(&self) {
+        use llvm_sys::transforms::coroutines::LLVMAddCoroCleanupPass;
+
+        unsafe {
+            LLVMAddCoroCleanupPass(self.pass_manager)
         }
     }
 }
@@ -1162,7 +1209,7 @@ impl PassRegistry {
         }
     }
 
-    #[llvm_versions(7.0 => latest)]
+    #[llvm_versions(7.0..=latest)]
     pub fn initialize_aggressive_inst_combiner(&self) {
         use llvm_sys::initialization::LLVMInitializeAggressiveInstCombiner;
 

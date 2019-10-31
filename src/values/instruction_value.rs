@@ -1,6 +1,8 @@
 use either::{Either, Either::{Left, Right}};
-use llvm_sys::core::{LLVMGetInstructionOpcode, LLVMIsTailCall, LLVMGetPreviousInstruction, LLVMGetNextInstruction, LLVMGetInstructionParent, LLVMInstructionEraseFromParent, LLVMInstructionClone, LLVMSetVolatile, LLVMGetVolatile, LLVMGetNumOperands, LLVMGetOperand, LLVMGetOperandUse, LLVMSetOperand, LLVMValueAsBasicBlock, LLVMIsABasicBlock};
-#[llvm_versions(3.9 => latest)]
+use llvm_sys::core::{LLVMGetAlignment, LLVMSetAlignment, LLVMGetInstructionOpcode, LLVMIsTailCall, LLVMGetPreviousInstruction, LLVMGetNextInstruction, LLVMGetInstructionParent, LLVMInstructionEraseFromParent, LLVMInstructionClone, LLVMSetVolatile, LLVMGetVolatile, LLVMGetNumOperands, LLVMGetOperand, LLVMGetOperandUse, LLVMSetOperand, LLVMValueAsBasicBlock, LLVMIsABasicBlock, LLVMGetICmpPredicate, LLVMGetFCmpPredicate, LLVMIsAAllocaInst, LLVMIsALoadInst, LLVMIsAStoreInst};
+#[llvm_versions(3.8..=latest)]
+use llvm_sys::core::{LLVMGetOrdering, LLVMSetOrdering};
+#[llvm_versions(3.9..=latest)]
 use llvm_sys::core::LLVMInstructionRemoveFromParent;
 use llvm_sys::LLVMOpcode;
 use llvm_sys::prelude::LLVMValueRef;
@@ -8,11 +10,13 @@ use llvm_sys::prelude::LLVMValueRef;
 use crate::basic_block::BasicBlock;
 use crate::values::traits::AsValueRef;
 use crate::values::{BasicValue, BasicValueEnum, BasicValueUse, Value};
+use crate::{AtomicOrdering, IntPredicate, FloatPredicate};
 
 // REVIEW: Split up into structs for SubTypes on InstructionValues?
 // REVIEW: This should maybe be split up into InstructionOpcode and ConstOpcode?
 // see LLVMGetConstOpcode
-#[derive(Debug, PartialEq, Eq)]
+#[llvm_enum(LLVMOpcode)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InstructionOpcode {
     // Actual Instructions:
     Add,
@@ -25,18 +29,20 @@ pub enum InstructionOpcode {
     BitCast,
     Br,
     Call,
-    #[cfg(not(any(feature = "llvm3-6", feature = "llvm3-7")))]
+    #[llvm_versions(3.8..=latest)]
     CatchPad,
-    #[cfg(not(any(feature = "llvm3-6", feature = "llvm3-7")))]
+    #[llvm_versions(3.8..=latest)]
     CatchRet,
-    #[cfg(not(any(feature = "llvm3-6", feature = "llvm3-7")))]
+    #[llvm_versions(3.8..=latest)]
     CatchSwitch,
-    #[cfg(not(any(feature = "llvm3-6", feature = "llvm3-7")))]
+    #[llvm_versions(3.8..=latest)]
     CleanupPad,
-    #[cfg(not(any(feature = "llvm3-6", feature = "llvm3-7")))]
+    #[llvm_versions(3.8..=latest)]
     CleanupRet,
     ExtractElement,
     ExtractValue,
+    #[llvm_versions(8.0..=latest)]
+    FNeg,
     FAdd,
     FCmp,
     FDiv,
@@ -60,9 +66,11 @@ pub enum InstructionOpcode {
     LShr,
     Mul,
     Or,
+    #[llvm_variant(LLVMPHI)]
     Phi,
     PtrToInt,
     Resume,
+    #[llvm_variant(LLVMRet)]
     Return,
     SDiv,
     Select,
@@ -86,162 +94,22 @@ pub enum InstructionOpcode {
     ZExt,
 }
 
-impl InstructionOpcode {
-    fn new(opcode: LLVMOpcode) -> Self {
-        match opcode {
-            LLVMOpcode::LLVMAdd => InstructionOpcode::Add,
-            LLVMOpcode::LLVMAddrSpaceCast => InstructionOpcode::AddrSpaceCast,
-            LLVMOpcode::LLVMAlloca => InstructionOpcode::Alloca,
-            LLVMOpcode::LLVMAnd => InstructionOpcode::And,
-            LLVMOpcode::LLVMAShr => InstructionOpcode::AShr,
-            LLVMOpcode::LLVMAtomicCmpXchg => InstructionOpcode::AtomicCmpXchg,
-            LLVMOpcode::LLVMAtomicRMW => InstructionOpcode::AtomicRMW,
-            LLVMOpcode::LLVMBitCast => InstructionOpcode::BitCast,
-            LLVMOpcode::LLVMBr => InstructionOpcode::Br,
-            LLVMOpcode::LLVMCall => InstructionOpcode::Call,
-            #[cfg(not(any(feature = "llvm3-6", feature = "llvm3-7")))]
-            LLVMOpcode::LLVMCatchPad => InstructionOpcode::CatchPad,
-            #[cfg(not(any(feature = "llvm3-6", feature = "llvm3-7")))]
-            LLVMOpcode::LLVMCatchRet => InstructionOpcode::CatchRet,
-            #[cfg(not(any(feature = "llvm3-6", feature = "llvm3-7")))]
-            LLVMOpcode::LLVMCatchSwitch => InstructionOpcode::CatchSwitch,
-            #[cfg(not(any(feature = "llvm3-6", feature = "llvm3-7")))]
-            LLVMOpcode::LLVMCleanupPad => InstructionOpcode::CleanupPad,
-            #[cfg(not(any(feature = "llvm3-6", feature = "llvm3-7")))]
-            LLVMOpcode::LLVMCleanupRet => InstructionOpcode::CleanupRet,
-            LLVMOpcode::LLVMExtractElement => InstructionOpcode::ExtractElement,
-            LLVMOpcode::LLVMExtractValue => InstructionOpcode::ExtractValue,
-            LLVMOpcode::LLVMFAdd => InstructionOpcode::FAdd,
-            LLVMOpcode::LLVMFCmp => InstructionOpcode::FCmp,
-            LLVMOpcode::LLVMFDiv => InstructionOpcode::FDiv,
-            LLVMOpcode::LLVMFence => InstructionOpcode::Fence,
-            LLVMOpcode::LLVMFMul => InstructionOpcode::FMul,
-            LLVMOpcode::LLVMFPExt => InstructionOpcode::FPExt,
-            LLVMOpcode::LLVMFPToSI => InstructionOpcode::FPToSI,
-            LLVMOpcode::LLVMFPToUI => InstructionOpcode::FPToUI,
-            LLVMOpcode::LLVMFPTrunc => InstructionOpcode::FPTrunc,
-            LLVMOpcode::LLVMFRem => InstructionOpcode::FRem,
-            LLVMOpcode::LLVMFSub => InstructionOpcode::FSub,
-            LLVMOpcode::LLVMGetElementPtr => InstructionOpcode::GetElementPtr,
-            LLVMOpcode::LLVMICmp => InstructionOpcode::ICmp,
-            LLVMOpcode::LLVMIndirectBr => InstructionOpcode::IndirectBr,
-            LLVMOpcode::LLVMInsertElement => InstructionOpcode::InsertElement,
-            LLVMOpcode::LLVMInsertValue => InstructionOpcode::InsertValue,
-            LLVMOpcode::LLVMIntToPtr => InstructionOpcode::IntToPtr,
-            LLVMOpcode::LLVMInvoke => InstructionOpcode::Invoke,
-            LLVMOpcode::LLVMLandingPad => InstructionOpcode::LandingPad,
-            LLVMOpcode::LLVMLoad => InstructionOpcode::Load,
-            LLVMOpcode::LLVMLShr => InstructionOpcode::LShr,
-            LLVMOpcode::LLVMMul => InstructionOpcode::Mul,
-            LLVMOpcode::LLVMOr => InstructionOpcode::Or,
-            LLVMOpcode::LLVMPHI => InstructionOpcode::Phi,
-            LLVMOpcode::LLVMPtrToInt => InstructionOpcode::PtrToInt,
-            LLVMOpcode::LLVMResume => InstructionOpcode::Resume,
-            LLVMOpcode::LLVMRet => InstructionOpcode::Return,
-            LLVMOpcode::LLVMSDiv => InstructionOpcode::SDiv,
-            LLVMOpcode::LLVMSelect => InstructionOpcode::Select,
-            LLVMOpcode::LLVMSExt => InstructionOpcode::SExt,
-            LLVMOpcode::LLVMShl => InstructionOpcode::Shl,
-            LLVMOpcode::LLVMShuffleVector => InstructionOpcode::ShuffleVector,
-            LLVMOpcode::LLVMSIToFP => InstructionOpcode::SIToFP,
-            LLVMOpcode::LLVMSRem => InstructionOpcode::SRem,
-            LLVMOpcode::LLVMStore => InstructionOpcode::Store,
-            LLVMOpcode::LLVMSub => InstructionOpcode::Sub,
-            LLVMOpcode::LLVMSwitch => InstructionOpcode::Switch,
-            LLVMOpcode::LLVMTrunc => InstructionOpcode::Trunc,
-            LLVMOpcode::LLVMUDiv => InstructionOpcode::UDiv,
-            LLVMOpcode::LLVMUIToFP => InstructionOpcode::UIToFP,
-            LLVMOpcode::LLVMUnreachable => InstructionOpcode::Unreachable,
-            LLVMOpcode::LLVMURem => InstructionOpcode::URem,
-            LLVMOpcode::LLVMUserOp1 => InstructionOpcode::UserOp1,
-            LLVMOpcode::LLVMUserOp2 => InstructionOpcode::UserOp2,
-            LLVMOpcode::LLVMVAArg => InstructionOpcode::VAArg,
-            LLVMOpcode::LLVMXor => InstructionOpcode::Xor,
-            LLVMOpcode::LLVMZExt => InstructionOpcode::ZExt,
-        }
-    }
-
-    pub(crate) fn as_llvm_opcode(&self) -> LLVMOpcode {
-        match *self {
-            InstructionOpcode::Add => LLVMOpcode::LLVMAdd,
-            InstructionOpcode::AddrSpaceCast => LLVMOpcode::LLVMAddrSpaceCast,
-            InstructionOpcode::Alloca => LLVMOpcode::LLVMAlloca,
-            InstructionOpcode::And => LLVMOpcode::LLVMAnd,
-            InstructionOpcode::AShr => LLVMOpcode::LLVMAShr,
-            InstructionOpcode::AtomicCmpXchg => LLVMOpcode::LLVMAtomicCmpXchg,
-            InstructionOpcode::AtomicRMW => LLVMOpcode::LLVMAtomicRMW,
-            InstructionOpcode::BitCast => LLVMOpcode::LLVMBitCast,
-            InstructionOpcode::Br => LLVMOpcode::LLVMBr,
-            InstructionOpcode::Call => LLVMOpcode::LLVMCall,
-            #[cfg(not(any(feature = "llvm3-6", feature = "llvm3-7")))]
-            InstructionOpcode::CatchPad => LLVMOpcode::LLVMCatchPad,
-            #[cfg(not(any(feature = "llvm3-6", feature = "llvm3-7")))]
-            InstructionOpcode::CatchRet => LLVMOpcode::LLVMCatchRet,
-            #[cfg(not(any(feature = "llvm3-6", feature = "llvm3-7")))]
-            InstructionOpcode::CatchSwitch => LLVMOpcode::LLVMCatchSwitch,
-            #[cfg(not(any(feature = "llvm3-6", feature = "llvm3-7")))]
-            InstructionOpcode::CleanupPad => LLVMOpcode::LLVMCleanupPad,
-            #[cfg(not(any(feature = "llvm3-6", feature = "llvm3-7")))]
-            InstructionOpcode::CleanupRet => LLVMOpcode::LLVMCleanupRet,
-            InstructionOpcode::ExtractElement => LLVMOpcode::LLVMExtractElement,
-            InstructionOpcode::ExtractValue => LLVMOpcode::LLVMExtractValue,
-            InstructionOpcode::FAdd => LLVMOpcode::LLVMFAdd,
-            InstructionOpcode::FCmp => LLVMOpcode::LLVMFCmp,
-            InstructionOpcode::FDiv => LLVMOpcode::LLVMFDiv,
-            InstructionOpcode::Fence => LLVMOpcode::LLVMFence,
-            InstructionOpcode::FMul => LLVMOpcode::LLVMFMul,
-            InstructionOpcode::FPExt => LLVMOpcode::LLVMFPExt,
-            InstructionOpcode::FPToSI => LLVMOpcode::LLVMFPToSI,
-            InstructionOpcode::FPToUI => LLVMOpcode::LLVMFPToUI,
-            InstructionOpcode::FPTrunc => LLVMOpcode::LLVMFPTrunc,
-            InstructionOpcode::FRem => LLVMOpcode::LLVMFRem,
-            InstructionOpcode::FSub => LLVMOpcode::LLVMFSub,
-            InstructionOpcode::GetElementPtr => LLVMOpcode::LLVMGetElementPtr,
-            InstructionOpcode::ICmp => LLVMOpcode::LLVMICmp,
-            InstructionOpcode::IndirectBr => LLVMOpcode::LLVMIndirectBr,
-            InstructionOpcode::InsertElement => LLVMOpcode::LLVMInsertElement,
-            InstructionOpcode::InsertValue => LLVMOpcode::LLVMInsertValue,
-            InstructionOpcode::IntToPtr => LLVMOpcode::LLVMIntToPtr,
-            InstructionOpcode::Invoke => LLVMOpcode::LLVMInvoke,
-            InstructionOpcode::LandingPad => LLVMOpcode::LLVMLandingPad,
-            InstructionOpcode::Load => LLVMOpcode::LLVMLoad,
-            InstructionOpcode::LShr => LLVMOpcode::LLVMLShr,
-            InstructionOpcode::Mul => LLVMOpcode::LLVMMul,
-            InstructionOpcode::Or => LLVMOpcode::LLVMOr,
-            InstructionOpcode::Phi => LLVMOpcode::LLVMPHI,
-            InstructionOpcode::PtrToInt => LLVMOpcode::LLVMPtrToInt,
-            InstructionOpcode::Resume => LLVMOpcode::LLVMResume,
-            InstructionOpcode::Return => LLVMOpcode::LLVMRet,
-            InstructionOpcode::SDiv => LLVMOpcode::LLVMSDiv,
-            InstructionOpcode::Select => LLVMOpcode::LLVMSelect,
-            InstructionOpcode::SExt => LLVMOpcode::LLVMSExt,
-            InstructionOpcode::Shl => LLVMOpcode::LLVMShl,
-            InstructionOpcode::ShuffleVector => LLVMOpcode::LLVMShuffleVector,
-            InstructionOpcode::SIToFP => LLVMOpcode::LLVMSIToFP,
-            InstructionOpcode::SRem => LLVMOpcode::LLVMSRem,
-            InstructionOpcode::Store => LLVMOpcode::LLVMStore,
-            InstructionOpcode::Sub => LLVMOpcode::LLVMSub,
-            InstructionOpcode::Switch => LLVMOpcode::LLVMSwitch,
-            InstructionOpcode::Trunc => LLVMOpcode::LLVMTrunc,
-            InstructionOpcode::UDiv => LLVMOpcode::LLVMUDiv,
-            InstructionOpcode::UIToFP => LLVMOpcode::LLVMUIToFP,
-            InstructionOpcode::Unreachable => LLVMOpcode::LLVMUnreachable,
-            InstructionOpcode::URem => LLVMOpcode::LLVMURem,
-            InstructionOpcode::UserOp1 => LLVMOpcode::LLVMUserOp1,
-            InstructionOpcode::UserOp2 => LLVMOpcode::LLVMUserOp2,
-            InstructionOpcode::VAArg => LLVMOpcode::LLVMVAArg,
-            InstructionOpcode::Xor => LLVMOpcode::LLVMXor,
-            InstructionOpcode::ZExt => LLVMOpcode::LLVMZExt,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Copy)]
+#[derive(Debug, PartialEq, Eq, Copy, Hash)]
 pub struct InstructionValue {
     instruction_value: Value,
 }
 
 impl InstructionValue {
+    fn is_a_load_inst(&self) -> bool {
+        !unsafe { LLVMIsALoadInst(self.as_value_ref()) }.is_null()
+    }
+    fn is_a_store_inst(&self) -> bool {
+        !unsafe { LLVMIsAStoreInst(self.as_value_ref()) }.is_null()
+    }
+    fn is_a_alloca_inst(&self) -> bool {
+        !unsafe { LLVMIsAAllocaInst(self.as_value_ref()) }.is_null()
+    }
+
     pub(crate) fn new(instruction_value: LLVMValueRef) -> Self {
         debug_assert!(!instruction_value.is_null());
 
@@ -294,7 +162,7 @@ impl InstructionValue {
     }
 
     // REVIEW: Potentially unsafe if parent BB or grandparent fn were removed?
-    #[llvm_versions(3.9 => latest)]
+    #[llvm_versions(3.9..=latest)]
     pub fn remove_from_basic_block(&self) {
         unsafe {
             LLVMInstructionRemoveFromParent(self.as_value_ref())
@@ -328,18 +196,77 @@ impl InstructionValue {
 
     // SubTypes: Only apply to memory access instructions
     /// Returns whether or not a memory access instruction is volatile.
-    pub fn get_volatile(&self) -> bool {
-        unsafe {
-            LLVMGetVolatile(self.as_value_ref()) == 1
+    pub fn get_volatile(&self) -> Result<bool, &'static str> {
+        // Although cmpxchg and atomicrmw can have volatile, LLVM's C API
+        // does not export that functionality.
+        if !self.is_a_load_inst() && !self.is_a_store_inst() {
+            return Err("Value is not a load or store.");
         }
+        Ok(unsafe { LLVMGetVolatile(self.as_value_ref()) } == 1)
     }
 
     // SubTypes: Only apply to memory access instructions
     /// Sets whether or not a memory access instruction is volatile.
-    pub fn set_volatile(&self, volatile: bool) {
-        unsafe {
-            LLVMSetVolatile(self.as_value_ref(), volatile as i32)
+    pub fn set_volatile(&self, volatile: bool) -> Result<(), &'static str> {
+        // Although cmpxchg and atomicrmw can have volatile, LLVM's C API
+        // does not export that functionality.
+        if !self.is_a_load_inst() && !self.is_a_store_inst() {
+            return Err("Value is not a load or store.");
         }
+        Ok(unsafe { LLVMSetVolatile(self.as_value_ref(), volatile as i32) })
+    }
+
+    // SubTypes: Only apply to memory access and alloca instructions
+    /// Returns alignment on a memory access instruction or alloca.
+    pub fn get_alignment(&self) -> Result<u32, &'static str> {
+        if !self.is_a_alloca_inst() && !self.is_a_load_inst() && !self.is_a_store_inst() {
+            return Err("Value is not an alloca, load or store.");
+        }
+        Ok(unsafe { LLVMGetAlignment(self.as_value_ref()) })
+    }
+
+    // SubTypes: Only apply to memory access and alloca instructions
+    /// Sets alignment on a memory access instruction or alloca.
+    pub fn set_alignment(&self, alignment: u32) -> Result<(), &'static str> {
+        if !alignment.is_power_of_two() && alignment != 0 {
+            return Err("Alignment is not a power of 2!");
+        }
+        if !self.is_a_alloca_inst() && !self.is_a_load_inst() && !self.is_a_store_inst() {
+            return Err("Value is not an alloca, load or store.");
+        }
+        Ok(unsafe { LLVMSetAlignment(self.as_value_ref(), alignment) })
+    }
+
+    // SubTypes: Only apply to memory access instructions
+    /// Returns atomic ordering on a memory access instruction.
+    #[llvm_versions(3.8..=latest)]
+    pub fn get_atomic_ordering(&self) -> Result<AtomicOrdering, &'static str> {
+        if !self.is_a_load_inst() && !self.is_a_store_inst() {
+            return Err("Value is not a load or store.");
+        }
+        Ok(unsafe { LLVMGetOrdering(self.as_value_ref()) }.into())
+    }
+
+    // SubTypes: Only apply to memory access instructions
+    /// Sets atomic ordering on a memory access instruction.
+    #[llvm_versions(3.8..=latest)]
+    pub fn set_atomic_ordering(&self, ordering: AtomicOrdering) -> Result<(), &'static str> {
+        // Although fence and atomicrmw both have an ordering, the LLVM C API
+        // does not support them. The cmpxchg instruction has two orderings and
+        // does not work with this API.
+        if !self.is_a_load_inst() && !self.is_a_store_inst() {
+            return Err("Value is not a load or store instruction.");
+        }
+        match ordering {
+            AtomicOrdering::Release if self.is_a_load_inst() =>
+                return Err("The release ordering is not valid on load instructions."),
+            AtomicOrdering::AcquireRelease =>
+                return Err("The acq_rel ordering is not valid on load or store instructions."),
+            AtomicOrdering::Acquire if self.is_a_store_inst() =>
+                return Err("The acquire ordering is not valid on store instructions."),
+            _ => { },
+        };
+        Ok(unsafe { LLVMSetOrdering(self.as_value_ref(), ordering.into()) })
     }
 
     /// Obtains the number of operands an `InstructionValue` has.
@@ -618,6 +545,46 @@ impl InstructionValue {
     /// ```
     pub fn get_first_use(&self) -> Option<BasicValueUse> {
         self.instruction_value.get_first_use()
+    }
+
+    /// Gets the predicate of an `ICmp` `InstructionValue`.
+    /// For instance, in the LLVM instruction
+    /// `%3 = icmp slt i32 %0, %1`
+    /// this gives the `slt`.
+    ///
+    /// If the instruction is not an `ICmp`, this returns None.
+    pub fn get_icmp_predicate(&self) -> Option<IntPredicate> {
+        // REVIEW: this call to get_opcode() can be inefficient;
+        // what happens if we don't perform this check, and just call
+        // LLVMGetICmpPredicate() regardless?
+        if self.get_opcode() == InstructionOpcode::ICmp {
+            let pred = unsafe {
+                LLVMGetICmpPredicate(self.as_value_ref())
+            };
+            Some(IntPredicate::new(pred))
+        } else {
+            None
+        }
+    }
+
+    /// Gets the predicate of an `FCmp` `InstructionValue`.
+    /// For instance, in the LLVM instruction
+    /// `%3 = fcmp olt float %0, %1`
+    /// this gives the `olt`.
+    ///
+    /// If the instruction is not an `FCmp`, this returns None.
+    pub fn get_fcmp_predicate(&self) -> Option<FloatPredicate> {
+        // REVIEW: this call to get_opcode() can be inefficient;
+        // what happens if we don't perform this check, and just call
+        // LLVMGetFCmpPredicate() regardless?
+        if self.get_opcode() == InstructionOpcode::FCmp {
+            let pred = unsafe {
+                LLVMGetFCmpPredicate(self.as_value_ref())
+            };
+            Some(FloatPredicate::new(pred))
+        } else {
+            None
+        }
     }
 }
 

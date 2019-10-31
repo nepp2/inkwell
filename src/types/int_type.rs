@@ -1,6 +1,7 @@
 use llvm_sys::core::{LLVMInt1Type, LLVMInt8Type, LLVMInt16Type, LLVMInt32Type, LLVMInt64Type, LLVMConstInt, LLVMConstAllOnes, LLVMIntType, LLVMGetIntTypeWidth, LLVMConstIntOfStringAndSize, LLVMConstIntOfArbitraryPrecision, LLVMConstArray};
 use llvm_sys::execution_engine::LLVMCreateGenericValueOfInt;
 use llvm_sys::prelude::{LLVMTypeRef, LLVMValueRef};
+use regex::Regex;
 
 use crate::AddressSpace;
 use crate::context::ContextRef;
@@ -8,6 +9,51 @@ use crate::support::LLVMString;
 use crate::types::traits::AsTypeRef;
 use crate::types::{Type, ArrayType, BasicTypeEnum, VectorType, PointerType, FunctionType};
 use crate::values::{AsValueRef, ArrayValue, GenericValue, IntValue};
+
+use std::convert::TryFrom;
+
+/// How to interpret a string or digits used to construct an integer constant.
+#[derive(Clone, Copy, Debug, EnumAsGetters, EnumIntoGetters, EnumToGetters, Eq, Hash, PartialEq)]
+pub enum StringRadix {
+    /// Binary 0 or 1
+    Binary = 2,
+    /// Octal 0-7
+    Octal = 8,
+    /// Decimal 0-9
+    Decimal = 10,
+    /// Hexadecimal with upper or lowercase letters up to F.
+    Hexadecimal = 16,
+    /// Alphanumeric, 0-9 and all 26 letters in upper or lowercase.
+    Alphanumeric = 36,
+}
+
+impl TryFrom<u8> for StringRadix {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            2 => Ok(StringRadix::Binary),
+            8 => Ok(StringRadix::Octal),
+            10 => Ok(StringRadix::Decimal),
+            16 => Ok(StringRadix::Hexadecimal),
+            36 => Ok(StringRadix::Alphanumeric),
+            _ => Err(()),
+        }
+    }
+}
+
+impl StringRadix {
+    /// Create a Regex that matches valid strings for the given radix.
+    pub fn to_regex(&self) -> Regex {
+        match self {
+            StringRadix::Binary => Regex::new(r"^[-+]?[01]+$").unwrap(),
+            StringRadix::Octal => Regex::new(r"^[-+]?[0-7]+$").unwrap(),
+            StringRadix::Decimal => Regex::new(r"^[-+]?[0-9]+$").unwrap(),
+            StringRadix::Hexadecimal => Regex::new(r"^[-+]?[0-9abcdefABCDEF]+$").unwrap(),
+            StringRadix::Alphanumeric => Regex::new(r"^[-+]?[0-9[:alpha:]]+$").unwrap(),
+        }
+    }
+}
 
 /// An `IntType` is the type of an integer constant or variable.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -208,33 +254,35 @@ impl IntType {
     /// # Example
     ///
     /// ```no_run
+    /// use std::convert::TryFrom;
+    ///
     /// use inkwell::context::Context;
+    /// use inkwell::types::StringRadix;
     ///
     /// let context = Context::create();
     /// let i8_type = context.i8_type();
-    /// let i8_val = i8_type.const_int_from_string("0121", 10);
+    /// let i8_val = i8_type.const_int_from_string("0121", StringRadix::Decimal).unwrap();
     ///
     /// assert_eq!(i8_val.print_to_string().to_string(), "i8 121");
     ///
-    /// let i8_val = i8_type.const_int_from_string("0121", 3);
+    /// let i8_val = i8_type.const_int_from_string("0121", StringRadix::try_from(10).unwrap()).unwrap();
     ///
     /// assert_eq!(i8_val.print_to_string().to_string(), "i8 16");
     ///
-    /// // Unexpected outputs:
-    /// let i8_val = i8_type.const_int_from_string("0121", 2);
+    /// let i8_val = i8_type.const_int_from_string("0121", StringRadix::Binary);
+    /// assert!(i8_val.is_none());
     ///
-    /// assert_eq!(i8_val.print_to_string().to_string(), "i8 3");
-    ///
-    /// let i8_val = i8_type.const_int_from_string("ABCD", 2);
-    ///
-    /// assert_eq!(i8_val.print_to_string().to_string(), "i8 -15");
+    /// let i8_val = i8_type.const_int_from_string("ABCD", StringRadix::Binary);
+    /// assert!(i8_val.is_none());
     /// ```
-    pub fn const_int_from_string(&self, slice: &str, radix: u8) -> IntValue {
+    pub fn const_int_from_string(&self, slice: &str, radix: StringRadix) -> Option<IntValue> {
+        if !radix.to_regex().is_match(slice) {
+            return None
+        }
         let value = unsafe {
-            LLVMConstIntOfStringAndSize(self.as_type_ref(), slice.as_ptr() as *const i8, slice.len() as u32, radix)
+            LLVMConstIntOfStringAndSize(self.as_type_ref(), slice.as_ptr() as *const i8, slice.len() as u32, radix as u8)
         };
-
-        IntValue::new(value)
+        Some(IntValue::new(value))
     }
 
     /// Create a constant `IntValue` of arbitrary precision.
@@ -259,7 +307,7 @@ impl IntType {
     /// Creates an `IntValue` representing a constant value of all one bits of this `IntType`. It will be automatically assigned this `IntType`'s `Context`.
     ///
     /// # Example
-    /// ```
+    /// ```no_run
     /// use inkwell::context::Context;
     /// use inkwell::types::IntType;
     ///
@@ -278,26 +326,6 @@ impl IntType {
         };
 
         IntValue::new(value)
-    }
-
-    /// Creates a constant null value of this `IntType`.
-    ///
-    /// # Example
-    /// ```
-    /// use inkwell::context::Context;
-    /// use inkwell::types::IntType;
-    ///
-    /// // Global Context
-    /// let i32_type = IntType::i32_type();
-    /// let i32_value = i32_type.const_null();
-    ///
-    /// // Custom Context
-    /// let context = Context::create();
-    /// let i32_type = context.i32_type();
-    /// let i32_value = i32_type.const_null();
-    /// ```
-    pub fn const_null(&self) -> IntValue {
-        IntValue::new(self.int_type.const_null())
     }
 
     /// Creates a constant zero value of this `IntType`.
@@ -473,7 +501,7 @@ impl IntType {
 
     // See Type::print_to_stderr note on 5.0+ status
     /// Prints the definition of an `IntType` to stderr. Not available in newer LLVM versions.
-    #[llvm_versions(3.7 => 4.0)]
+    #[llvm_versions(3.7..=4.0)]
     pub fn print_to_stderr(&self) {
         self.int_type.print_to_stderr()
     }

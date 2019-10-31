@@ -7,7 +7,7 @@ use crate::support::LLVMString;
 use crate::types::{AsTypeRef, IntType, PointerType};
 use crate::values::{AsValueRef, InstructionValue, IntValue, Value, MetadataValue};
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct PointerValue {
     ptr_value: Value,
 }
@@ -51,9 +51,6 @@ impl PointerValue {
     ///
     /// let context = Context::create();
     /// let void_type = context.void_type();
-    /// let void_ptr_null = void_type.ptr_type(AddressSpace::Generic).const_null();
-    ///
-    /// assert!(void_ptr_null.is_const());
     /// ```
     pub fn is_const(&self) -> bool {
         self.ptr_value.is_const()

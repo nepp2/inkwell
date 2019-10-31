@@ -8,6 +8,8 @@ use crate::types::traits::AsTypeRef;
 use crate::types::{AnyTypeEnum, Type, BasicTypeEnum, ArrayType, FunctionType, VectorType};
 use crate::values::{AsValueRef, ArrayValue, PointerValue, IntValue};
 
+use std::convert::TryFrom;
+
 /// A `PointerType` is the type of a pointer constant or variable.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct PointerType {
@@ -166,9 +168,11 @@ impl PointerType {
     /// assert_eq!(f32_ptr_type.get_address_space(), AddressSpace::Generic);
     /// ```
     pub fn get_address_space(&self) -> AddressSpace {
-        unsafe {
-            LLVMGetPointerAddressSpace(self.as_type_ref()).into()
-        }
+        let addr_space = unsafe {
+            LLVMGetPointerAddressSpace(self.as_type_ref())
+        };
+
+        AddressSpace::try_from(addr_space).expect("Unexpectedly found invalid AddressSpace value")
     }
 
     /// Prints the definition of a `PointerType` to a `LLVMString`.
@@ -178,7 +182,7 @@ impl PointerType {
 
     // See Type::print_to_stderr note on 5.0+ status
     /// Prints the definition of an `IntType` to stderr. Not available in newer LLVM versions.
-    #[llvm_versions(3.7 => 4.0)]
+    #[llvm_versions(3.7..=4.0)]
     pub fn print_to_stderr(&self) {
         self.ptr_type.print_to_stderr()
     }
@@ -187,7 +191,7 @@ impl PointerType {
     /// It will be automatically assigned this `PointerType`'s `Context`.
     ///
     /// # Example
-    /// ```
+    /// ```no_run
     /// use inkwell::AddressSpace;
     /// use inkwell::context::Context;
     /// use inkwell::types::FloatType;
@@ -208,7 +212,7 @@ impl PointerType {
     /// assert!(f32_ptr_null.is_null());
     /// ```
     pub fn const_null(&self) -> PointerValue {
-        PointerValue::new(self.ptr_type.const_null())
+        PointerValue::new(self.ptr_type.const_zero())
     }
 
     // REVIEW: Unlike the other const_zero functions, this one becomes null instead of a 0 value. Maybe remove?

@@ -1,18 +1,23 @@
 //! `Attribute`s are optional modifiers to functions, function parameters, and return types.
 
+#[llvm_versions(3.9..=latest)]
 use llvm_sys::prelude::LLVMAttributeRef;
+#[llvm_versions(3.9..=latest)]
 use llvm_sys::core::{LLVMGetEnumAttributeKindForName, LLVMGetLastEnumAttributeKind, LLVMGetEnumAttributeKind, LLVMGetEnumAttributeValue, LLVMGetStringAttributeKind, LLVMGetStringAttributeValue, LLVMIsEnumAttribute, LLVMIsStringAttribute};
 
+#[llvm_versions(3.9..=latest)]
 use std::ffi::CStr;
 
 // SubTypes: Attribute<Enum>, Attribute<String>
 /// Functions, function parameters, and return types can have `Attribute`s to indicate
 /// how they should be treated by optimizations and code generation.
+#[llvm_versions(3.9..=latest)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Attribute {
     pub(crate) attribute: LLVMAttributeRef,
 }
 
+#[llvm_versions(3.9..=latest)]
 impl Attribute {
     pub(crate) fn new(attribute: LLVMAttributeRef) -> Self {
         debug_assert!(!attribute.is_null());
@@ -186,6 +191,31 @@ impl Attribute {
 
         unsafe {
             CStr::from_ptr(cstr_ptr)
+        }
+    }
+}
+
+/// An `AttributeLoc` determines where on a function an attribute is assigned to.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum AttributeLoc {
+    /// Assign to the `FunctionValue`'s return type.
+    Return,
+    /// Assign to one of the `FunctionValue`'s params (0-indexed).
+    Param(u32),
+    /// Assign to the `FunctionValue` itself.
+    Function,
+}
+
+impl AttributeLoc {
+    pub(crate) fn get_index(&self) -> u32 {
+        match self {
+            AttributeLoc::Return => 0,
+            AttributeLoc::Param(index) => {
+                assert!(*index <= u32::max_value() - 2, "Param index must be <= u32::max_value() - 2");
+
+                index + 1
+            },
+            AttributeLoc::Function => u32::max_value(),
         }
     }
 }

@@ -1,6 +1,13 @@
 use llvm_sys::LLVMThreadLocalMode;
-use llvm_sys::core::{LLVMGetVisibility, LLVMSetVisibility, LLVMGetSection, LLVMSetSection, LLVMIsExternallyInitialized, LLVMSetExternallyInitialized, LLVMDeleteGlobal, LLVMIsGlobalConstant, LLVMSetGlobalConstant, LLVMGetPreviousGlobal, LLVMGetNextGlobal, LLVMHasUnnamedAddr, LLVMSetUnnamedAddr, LLVMIsThreadLocal, LLVMSetThreadLocal, LLVMGetThreadLocalMode, LLVMSetThreadLocalMode, LLVMGetInitializer, LLVMSetInitializer, LLVMIsDeclaration, LLVMGetDLLStorageClass, LLVMSetDLLStorageClass, LLVMGetAlignment, LLVMSetAlignment, LLVMGetLinkage, LLVMSetLinkage};
-#[llvm_versions(7.0 => latest)]
+#[llvm_versions(3.6..8.0)]
+use llvm_sys::core::{LLVMGetVisibility, LLVMSetVisibility, LLVMGetSection, LLVMSetSection, LLVMIsExternallyInitialized, LLVMSetExternallyInitialized, LLVMDeleteGlobal, LLVMIsGlobalConstant, LLVMSetGlobalConstant, LLVMGetPreviousGlobal, LLVMGetNextGlobal, LLVMIsThreadLocal, LLVMSetThreadLocal, LLVMGetThreadLocalMode, LLVMSetThreadLocalMode, LLVMGetInitializer, LLVMSetInitializer, LLVMIsDeclaration, LLVMGetDLLStorageClass, LLVMSetDLLStorageClass, LLVMGetAlignment, LLVMSetAlignment, LLVMGetLinkage, LLVMSetLinkage};
+#[llvm_versions(8.0..=latest)]
+use llvm_sys::core::{LLVMGetVisibility, LLVMSetVisibility, LLVMGetSection, LLVMSetSection, LLVMIsExternallyInitialized, LLVMSetExternallyInitialized, LLVMDeleteGlobal, LLVMIsGlobalConstant, LLVMSetGlobalConstant, LLVMGetPreviousGlobal, LLVMGetNextGlobal, LLVMIsThreadLocal, LLVMSetThreadLocal, LLVMGetThreadLocalMode, LLVMSetThreadLocalMode, LLVMGetInitializer, LLVMSetInitializer, LLVMIsDeclaration, LLVMGetDLLStorageClass, LLVMSetDLLStorageClass, LLVMGetAlignment, LLVMSetAlignment, LLVMGetLinkage, LLVMSetLinkage};
+#[llvm_versions(3.6..=6.0)]
+use llvm_sys::core::{LLVMHasUnnamedAddr, LLVMSetUnnamedAddr};
+#[llvm_versions(7.0..=latest)]
+use llvm_sys::core::{LLVMGetUnnamedAddress, LLVMSetUnnamedAddress};
+#[llvm_versions(7.0..=latest)]
 use llvm_sys::LLVMUnnamedAddr;
 use llvm_sys::prelude::LLVMValueRef;
 
@@ -9,14 +16,14 @@ use std::ffi::{CString, CStr};
 use crate::{GlobalVisibility, ThreadLocalMode, DLLStorageClass};
 use crate::module::Linkage;
 use crate::support::LLVMString;
-#[llvm_versions(7.0 => latest)]
+#[llvm_versions(7.0..=latest)]
 use crate::comdat::Comdat;
 use crate::values::traits::AsValueRef;
 use crate::values::{BasicValueEnum, BasicValue, PointerValue, Value};
 
 // REVIEW: GlobalValues are always PointerValues. With SubTypes, we should
 // compress this into a PointerValue<Global> type
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct GlobalValue {
     global_value: Value,
 }
@@ -81,7 +88,7 @@ impl GlobalValue {
     }
 
     // SubType: This input type should be tied to the BasicType
-    pub fn set_initializer(&self, value: &BasicValue) {
+    pub fn set_initializer(&self, value: &dyn BasicValue) {
         unsafe {
             LLVMSetInitializer(self.as_value_ref(), value.as_value_ref())
         }
@@ -148,15 +155,36 @@ impl GlobalValue {
         }
     }
 
+    #[llvm_versions(3.6..7.0)]
     pub fn has_unnamed_addr(&self) -> bool {
         unsafe {
             LLVMHasUnnamedAddr(self.as_value_ref()) == 1
         }
     }
 
+    #[llvm_versions(7.0..=latest)]
+    pub fn has_unnamed_addr(&self) -> bool {
+        unsafe {
+            LLVMGetUnnamedAddress(self.as_value_ref()) == LLVMUnnamedAddr::LLVMGlobalUnnamedAddr
+        }
+    }
+
+
+    #[llvm_versions(3.6..7.0)]
     pub fn set_unnamed_addr(&self, has_unnamed_addr: bool) {
         unsafe {
             LLVMSetUnnamedAddr(self.as_value_ref(), has_unnamed_addr as i32)
+        }
+    }
+
+    #[llvm_versions(7.0..=latest)]
+    pub fn set_unnamed_addr(&self, has_unnamed_addr: bool) {
+        unsafe {
+            if has_unnamed_addr {
+                LLVMSetUnnamedAddress(self.as_value_ref(), UnnamedAddress::Global.into())
+            } else {
+                LLVMSetUnnamedAddress(self.as_value_ref(), UnnamedAddress::None.into())
+            }
         }
     }
 
@@ -233,7 +261,7 @@ impl GlobalValue {
     }
 
     /// Gets a `Comdat` assigned to this `GlobalValue`, if any.
-    #[llvm_versions(7.0 => latest)]
+    #[llvm_versions(7.0..=latest)]
     pub fn get_comdat(&self) -> Option<Comdat> {
         use llvm_sys::comdat::LLVMGetComdat;
 
@@ -249,7 +277,7 @@ impl GlobalValue {
     }
 
     /// Assigns a `Comdat` to this `GlobalValue`.
-    #[llvm_versions(7.0 => latest)]
+    #[llvm_versions(7.0..=latest)]
     pub fn set_comdat(&self, comdat: Comdat) {
         use llvm_sys::comdat::LLVMSetComdat;
 
@@ -258,7 +286,7 @@ impl GlobalValue {
         }
     }
 
-    #[llvm_versions(7.0 => latest)]
+    #[llvm_versions(7.0..=latest)]
     pub fn get_unnamed_address(&self) -> UnnamedAddress {
         use llvm_sys::core::LLVMGetUnnamedAddress;
 
@@ -269,12 +297,12 @@ impl GlobalValue {
         UnnamedAddress::new(unnamed_address)
     }
 
-    #[llvm_versions(7.0 => latest)]
+    #[llvm_versions(7.0..=latest)]
     pub fn set_unnamed_address(&self, address: UnnamedAddress) {
         use llvm_sys::core::LLVMSetUnnamedAddress;
 
         unsafe {
-            LLVMSetUnnamedAddress(self.as_value_ref(), address.as_llvm_enum())
+            LLVMSetUnnamedAddress(self.as_value_ref(), address.into())
         }
     }
 
@@ -303,15 +331,20 @@ impl AsValueRef for GlobalValue {
     }
 }
 
-#[llvm_versions(7.0 => latest)]
-enum_rename! {
-    /// This enum determines the significance of a `GlobalValue`'s address.
-    UnnamedAddress <=> LLVMUnnamedAddr {
-        /// Address of the `GlobalValue` is significant.
-        None <=> LLVMNoUnnamedAddr,
-        /// Address of the `GlobalValue` is locally insignificant.
-        Local <=> LLVMLocalUnnamedAddr,
-        /// Address of the `GlobalValue` is globally insignificant.
-        Global <=> LLVMGlobalUnnamedAddr,
-    }
+/// This enum determines the significance of a `GlobalValue`'s address.
+#[llvm_versions(7.0..=latest)]
+#[llvm_enum(LLVMUnnamedAddr)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum UnnamedAddress {
+    /// Address of the `GlobalValue` is significant.
+    #[llvm_variant(LLVMNoUnnamedAddr)]
+    None,
+
+    /// Address of the `GlobalValue` is locally insignificant.
+    #[llvm_variant(LLVMLocalUnnamedAddr)]
+    Local,
+
+    /// Address of the `GlobalValue` is globally insignificant.
+    #[llvm_variant(LLVMGlobalUnnamedAddr)]
+    Global,
 }

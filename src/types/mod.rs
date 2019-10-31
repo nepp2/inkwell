@@ -24,7 +24,7 @@ pub use crate::types::array_type::ArrayType;
 pub use crate::types::enums::{AnyTypeEnum, BasicTypeEnum};
 pub use crate::types::float_type::FloatType;
 pub use crate::types::fn_type::FunctionType;
-pub use crate::types::int_type::IntType;
+pub use crate::types::int_type::{IntType, StringRadix};
 pub use crate::types::ptr_type::PointerType;
 pub use crate::types::struct_type::StructType;
 pub use crate::types::traits::{AnyType, BasicType, IntMathType, FloatMathType, PointerMathType};
@@ -32,10 +32,12 @@ pub use crate::types::vec_type::VectorType;
 pub use crate::types::void_type::VoidType;
 pub(crate) use crate::types::traits::AsTypeRef;
 
-#[llvm_versions(3.7 => 4.0)]
+#[llvm_versions(3.7..=4.0)]
 use llvm_sys::core::LLVMDumpType;
-use llvm_sys::core::{LLVMAlignOf, LLVMGetTypeContext, LLVMFunctionType, LLVMArrayType, LLVMGetUndef, LLVMPointerType, LLVMPrintTypeToString, LLVMTypeIsSized, LLVMSizeOf, LLVMVectorType, LLVMConstPointerNull, LLVMGetElementType, LLVMConstNull};
+use llvm_sys::core::{LLVMAlignOf, LLVMGetTypeContext, LLVMFunctionType, LLVMArrayType, LLVMGetUndef, LLVMPointerType, LLVMPrintTypeToString, LLVMTypeIsSized, LLVMSizeOf, LLVMVectorType, LLVMGetElementType, LLVMConstNull};
 use llvm_sys::prelude::{LLVMTypeRef, LLVMValueRef};
+#[cfg(feature = "experimental")]
+use static_alloc::Slab;
 
 use std::fmt;
 use std::rc::Rc;
@@ -65,18 +67,10 @@ impl Type {
     // and so will fail to link when used. I've decided to remove it from 5.0+
     // for now. We should consider removing it altogether since print_to_string
     // could be used and manually written to stderr in rust...
-    #[llvm_versions(3.7 => 4.0)]
+    #[llvm_versions(3.7..=4.0)]
     fn print_to_stderr(&self) {
         unsafe {
             LLVMDumpType(self.type_);
-        }
-    }
-
-    // Even though the LLVM fuction has the word "Pointer", it doesn't seem to create
-    // a pointer at all, just a null value of the current type...
-    fn const_null(&self) -> LLVMValueRef {
-        unsafe {
-            LLVMConstPointerNull(self.type_)
         }
     }
 
@@ -102,13 +96,29 @@ impl Type {
         VectorType::new(vec_type)
     }
 
-    // REVIEW: Can you make a FunctionType from a FunctionType???
+    #[cfg(not(feature = "experimental"))]
     fn fn_type(&self, param_types: &[BasicTypeEnum], is_var_args: bool) -> FunctionType {
         let mut param_types: Vec<LLVMTypeRef> = param_types.iter()
                                                            .map(|val| val.as_type_ref())
                                                            .collect();
         let fn_type = unsafe {
             LLVMFunctionType(self.type_, param_types.as_mut_ptr(), param_types.len() as u32, is_var_args as i32)
+        };
+
+        FunctionType::new(fn_type)
+    }
+
+    #[cfg(feature = "experimental")]
+    fn fn_type(&self, param_types: &[BasicTypeEnum], is_var_args: bool) -> FunctionType {
+        let pool: Slab<[usize; 16]> = Slab::uninit();
+        let mut fixed_vec = pool.fixed_vec(param_types.len()).expect("Found more than 16 params");
+
+        for param_type in param_types {
+            fixed_vec.push(param_type.as_type_ref()).expect("Unexpected error");
+        }
+
+        let fn_type = unsafe {
+            LLVMFunctionType(self.type_, fixed_vec.as_mut_ptr(), fixed_vec.len() as u32, is_var_args as i32)
         };
 
         FunctionType::new(fn_type)

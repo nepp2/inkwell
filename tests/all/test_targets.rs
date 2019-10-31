@@ -66,14 +66,20 @@ use std::str::from_utf8;
 
 #[test]
 fn test_target_and_target_machine() {
+    Target::initialize_native(&InitializationConfig::default()).expect("Failed to initialize native target");
+
     let bad_target = Target::from_name("asd");
 
     assert!(bad_target.is_none());
 
-    let _bad_target2 = Target::from_triple("x86_64-pc-linux-gnu");
+    let bad_target2 = Target::from_triple("sadas");
 
-    // REVIEW: Inconsistent success :(
-    // assert_eq!(*bad_target2.unwrap_err(), *CString::new("Unable to find target for this triple (no targets are registered)").unwrap());
+    #[cfg(any(feature = "llvm3-6", feature = "llvm3-7", feature = "llvm3-8"))]
+    assert_eq!(bad_target2.unwrap_err().to_string(), "No available targets are compatible with this triple, see -version for the available targets.");
+    #[cfg(any(feature = "llvm3-9", feature = "llvm4-0", feature = "llvm5-0", feature = "llvm6-0", feature = "llvm7-0"))]
+    assert_eq!(bad_target2.unwrap_err().to_string(), "No available targets are compatible with this triple.");
+    #[cfg(not(any(feature = "llvm3-6", feature = "llvm3-7", feature = "llvm3-8", feature = "llvm3-9", feature = "llvm4-0", feature = "llvm5-0", feature = "llvm6-0", feature = "llvm7-0")))]
+    assert_eq!(bad_target2.unwrap_err().to_string(), "No available targets are compatible with triple \"sadas\"");
 
     Target::initialize_x86(&InitializationConfig::default());
 

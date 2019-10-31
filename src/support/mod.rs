@@ -77,7 +77,7 @@ impl Error for LLVMString {
         self.to_str().expect("Could not convert LLVMString to str (likely invalid unicode)")
     }
 
-    fn cause(&self) -> Option<&Error> {
+    fn cause(&self) -> Option<&dyn Error> {
         None
     }
 }
@@ -144,9 +144,9 @@ pub fn is_multithreaded() -> bool {
 }
 
 pub fn enable_llvm_pretty_stack_trace() {
-    #[llvm_versions(3.6 => 3.7)]
+    #[llvm_versions(3.6..=3.7)]
     use llvm_sys::core::LLVMEnablePrettyStackTrace;
-    #[llvm_versions(3.8 => latest)]
+    #[llvm_versions(3.8..=latest)]
     use llvm_sys::error_handling::LLVMEnablePrettyStackTrace;
 
     unsafe {
@@ -154,11 +154,12 @@ pub fn enable_llvm_pretty_stack_trace() {
     }
 }
 
+// DEPRECATED: Use llvm_enum attr instead
 macro_rules! enum_rename {
     ($(#[$enum_attrs:meta])* $enum_name:ident <=> $llvm_enum_name:ident {
         $($(#[$variant_attrs:meta])* $args:ident <=> $llvm_args:ident,)+
     }) => (
-        #[derive(Debug, PartialEq, Eq, Copy, Clone)]
+        #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
         $(#[$enum_attrs])*
         pub enum $enum_name {
             $(

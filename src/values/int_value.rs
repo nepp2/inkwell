@@ -1,5 +1,5 @@
 use llvm_sys::core::{LLVMConstNot, LLVMConstNeg, LLVMConstNSWNeg, LLVMConstNUWNeg, LLVMConstAdd, LLVMConstNSWAdd, LLVMConstNUWAdd, LLVMConstSub, LLVMConstNSWSub, LLVMConstNUWSub, LLVMConstMul, LLVMConstNSWMul, LLVMConstNUWMul, LLVMConstUDiv, LLVMConstSDiv, LLVMConstSRem, LLVMConstURem, LLVMConstIntCast, LLVMConstXor, LLVMConstOr, LLVMConstAnd, LLVMConstExactSDiv, LLVMConstShl, LLVMConstLShr, LLVMConstAShr, LLVMConstUIToFP, LLVMConstSIToFP, LLVMConstIntToPtr, LLVMConstTrunc, LLVMConstSExt, LLVMConstZExt, LLVMConstTruncOrBitCast, LLVMConstSExtOrBitCast, LLVMConstZExtOrBitCast, LLVMConstBitCast, LLVMConstICmp, LLVMConstIntGetZExtValue, LLVMConstIntGetSExtValue, LLVMConstSelect};
-#[llvm_versions(4.0 => latest)]
+#[llvm_versions(4.0..=latest)]
 use llvm_sys::core::LLVMConstExactUDiv;
 use llvm_sys::prelude::LLVMValueRef;
 
@@ -11,7 +11,7 @@ use crate::types::{AsTypeRef, FloatType, PointerType, IntType};
 use crate::values::traits::AsValueRef;
 use crate::values::{BasicValue, BasicValueEnum, FloatValue, InstructionValue, PointerValue, Value, MetadataValue};
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct IntValue {
     int_value: Value,
 }
@@ -186,7 +186,7 @@ impl IntValue {
         IntValue::new(value)
     }
 
-    #[llvm_versions(4.0 => latest)]
+    #[llvm_versions(4.0..=latest)]
     pub fn const_exact_unsigned_div(&self, rhs: IntValue) -> Self {
         let value = unsafe {
             LLVMConstExactUDiv(self.as_value_ref(), rhs.as_value_ref())
@@ -370,7 +370,7 @@ impl IntValue {
     // SubType: rhs same as lhs; return IntValue<bool>
     pub fn const_int_compare(&self, op: IntPredicate, rhs: IntValue) -> IntValue {
         let value = unsafe {
-            LLVMConstICmp(op.as_llvm_enum(), self.as_value_ref(), rhs.as_value_ref())
+            LLVMConstICmp(op.into(), self.as_value_ref(), rhs.as_value_ref())
         };
 
         IntValue::new(value)
@@ -420,6 +420,9 @@ impl IntValue {
         if !self.is_const() {
             return None;
         }
+        if self.get_type().get_bit_width() > 64 {
+            return None;
+        }
 
         unsafe {
             Some(LLVMConstIntGetZExtValue(self.as_value_ref()))
@@ -442,6 +445,9 @@ impl IntValue {
     pub fn get_sign_extended_constant(&self) -> Option<i64> {
         // Garbage values are produced on non constant values
         if !self.is_const() {
+            return None;
+        }
+        if self.get_type().get_bit_width() > 64 {
             return None;
         }
 

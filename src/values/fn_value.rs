@@ -1,8 +1,8 @@
 use llvm_sys::analysis::{LLVMVerifierFailureAction, LLVMVerifyFunction, LLVMViewFunctionCFG, LLVMViewFunctionCFGOnly};
-use llvm_sys::core::{LLVMIsAFunction, LLVMIsConstant, LLVMGetLinkage, LLVMTypeOf, LLVMGetPreviousFunction, LLVMGetNextFunction, LLVMGetParam, LLVMCountParams, LLVMGetLastParam, LLVMCountBasicBlocks, LLVMGetFirstParam, LLVMGetNextParam, LLVMGetBasicBlocks, LLVMGetReturnType, LLVMAppendBasicBlock, LLVMDeleteFunction, LLVMGetElementType, LLVMGetLastBasicBlock, LLVMGetFirstBasicBlock, LLVMGetEntryBasicBlock, LLVMGetIntrinsicID, LLVMGetFunctionCallConv, LLVMSetFunctionCallConv, LLVMGetGC, LLVMSetGC, LLVMSetLinkage, LLVMSetParamAlignment, LLVMGetParams};
-#[llvm_versions(3.7 => latest)]
+use llvm_sys::core::{LLVMIsAFunction, LLVMIsConstant, LLVMGetLinkage, LLVMGetPreviousFunction, LLVMGetNextFunction, LLVMGetParam, LLVMCountParams, LLVMGetLastParam, LLVMCountBasicBlocks, LLVMGetFirstParam, LLVMGetNextParam, LLVMGetBasicBlocks, LLVMAppendBasicBlock, LLVMDeleteFunction, LLVMGetLastBasicBlock, LLVMGetFirstBasicBlock, LLVMGetIntrinsicID, LLVMGetFunctionCallConv, LLVMSetFunctionCallConv, LLVMGetGC, LLVMSetGC, LLVMSetLinkage, LLVMSetParamAlignment, LLVMGetParams};
+#[llvm_versions(3.7..=latest)]
 use llvm_sys::core::{LLVMGetPersonalityFn, LLVMSetPersonalityFn};
-#[llvm_versions(3.9 => latest)]
+#[llvm_versions(3.9..=latest)]
 use llvm_sys::core::{LLVMAddAttributeAtIndex, LLVMGetAttributeCountAtIndex, LLVMGetEnumAttributeAtIndex, LLVMGetStringAttributeAtIndex, LLVMRemoveEnumAttributeAtIndex, LLVMRemoveStringAttributeAtIndex};
 use llvm_sys::prelude::{LLVMValueRef, LLVMBasicBlockRef};
 
@@ -10,16 +10,16 @@ use std::ffi::{CStr, CString};
 use std::mem::forget;
 use std::fmt;
 
-#[llvm_versions(3.9 => latest)]
-use crate::attributes::Attribute;
+#[llvm_versions(3.9..=latest)]
+use crate::attributes::{Attribute, AttributeLoc};
 use crate::basic_block::BasicBlock;
 use crate::module::Linkage;
 use crate::support::LLVMString;
-use crate::types::{BasicTypeEnum, FunctionType};
+use crate::types::{FunctionType, PointerType};
 use crate::values::traits::AsValueRef;
-use crate::values::{BasicValueEnum, GlobalValue, Value, MetadataValue};
+use crate::values::{BasicValueEnum, GlobalValue, MetadataValue, Value};
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Hash)]
 pub struct FunctionValue {
     fn_value: Value,
 }
@@ -123,22 +123,6 @@ impl FunctionValue {
         Some(BasicValueEnum::new(param))
     }
 
-    // REVIEW: Odd behavior, a function with no BBs returns a ptr
-    // that isn't actually a basic_block and seems to get corrupted
-    // Should check filed LLVM bugs - maybe just return None since
-    // we can catch it with "LLVMIsABasicBlock"
-    pub fn get_entry_basic_block(&self) -> Option<BasicBlock> {
-        let bb = unsafe {
-            LLVMGetEntryBasicBlock(self.as_value_ref())
-        };
-
-        BasicBlock::new(bb)
-    }
-
-    // REVIEW: Odd behavior, a function with no BBs returns a ptr
-    // that isn't actually a basic_block and seems to get corrupted
-    // Should check filed LLVM bugs - maybe just return None since
-    // we can catch it with "LLVMIsABasicBlock"
     pub fn get_first_basic_block(&self) -> Option<BasicBlock> {
         let bb = unsafe {
             LLVMGetFirstBasicBlock(self.as_value_ref())
@@ -201,14 +185,6 @@ impl FunctionValue {
         raw_vec.iter().map(|val| BasicBlock::new(*val).unwrap()).collect()
     }
 
-    pub fn get_return_type(&self) -> BasicTypeEnum {
-        let type_ = unsafe {
-            LLVMGetReturnType(LLVMGetElementType(LLVMTypeOf(self.fn_value.value)))
-        };
-
-        BasicTypeEnum::new(type_)
-    }
-
     pub fn get_param_iter(&self) -> ParamValueIter {
         ParamValueIter {
             param_iter_value: self.fn_value.value,
@@ -262,7 +238,9 @@ impl FunctionValue {
     }
 
     pub fn get_type(&self) -> FunctionType {
-        FunctionType::new(self.fn_value.get_type())
+        let ptr_type = PointerType::new(self.fn_value.get_type());
+
+        ptr_type.get_element_type().into_function_type()
     }
 
     pub fn has_metadata(&self) -> bool {
@@ -278,7 +256,7 @@ impl FunctionValue {
     }
 
     // TODOC: How this works as an exception handler
-    #[llvm_versions(3.9 => latest)]
+    #[llvm_versions(3.9..=latest)]
     pub fn has_personality_function(&self) -> bool {
         use llvm_sys::core::LLVMHasPersonalityFn;
 
@@ -312,14 +290,12 @@ impl FunctionValue {
     // but not in all other versions
     #[cfg(feature = "llvm3-8")]
     pub unsafe fn get_personality_function(&self) -> Option<FunctionValue> {
-        let value = unsafe {
-            LLVMGetPersonalityFn(self.as_value_ref())
-        };
+        let value = LLVMGetPersonalityFn(self.as_value_ref());
 
         FunctionValue::new(value)
     }
 
-    #[llvm_versions(3.7 => latest)]
+    #[llvm_versions(3.7..=latest)]
     pub fn set_personality_function(&self, personality_fn: FunctionValue) {
         unsafe {
             LLVMSetPersonalityFn(self.as_value_ref(), personality_fn.as_value_ref())
@@ -362,12 +338,12 @@ impl FunctionValue {
         self.fn_value.replace_all_uses_with(other.as_value_ref())
     }
 
-    /// Adds an `Attribute` to this `FunctionValue` if index is 0, otherwise to its parameter
-    /// in the 1 - Nth position.
+    /// Adds an `Attribute` to a particular location in this `FunctionValue`.
     ///
     /// # Example
     ///
     /// ```no_run
+    /// use inkwell::attributes::AttributeLoc;
     /// use inkwell::context::Context;
     ///
     /// let context = Context::create();
@@ -378,22 +354,22 @@ impl FunctionValue {
     /// let string_attribute = context.create_string_attribute("my_key", "my_val");
     /// let enum_attribute = context.create_enum_attribute(1, 1);
     ///
-    /// fn_value.add_attribute(0, string_attribute);
-    /// fn_value.add_attribute(0, enum_attribute);
+    /// fn_value.add_attribute(AttributeLoc::Return, string_attribute);
+    /// fn_value.add_attribute(AttributeLoc::Return, enum_attribute);
     /// ```
-    #[llvm_versions(3.9 => latest)]
-    pub fn add_attribute(&self, index: u32, attribute: Attribute) {
+    #[llvm_versions(3.9..=latest)]
+    pub fn add_attribute(&self, loc: AttributeLoc, attribute: Attribute) {
         unsafe {
-            LLVMAddAttributeAtIndex(self.as_value_ref(), index, attribute.attribute)
+            LLVMAddAttributeAtIndex(self.as_value_ref(), loc.get_index(), attribute.attribute)
         }
     }
 
-    /// Counts the number of `Attribute`s belonging to this `FunctionValue` if index is 0,
-    /// otherwise to its parameter in the 1 - Nth position.
+    /// Counts the number of `Attribute`s belonging to the specified location in this `FunctionValue`.
     ///
     /// # Example
     ///
     /// ```no_run
+    /// use inkwell::attributes::AttributeLoc;
     /// use inkwell::context::Context;
     ///
     /// let context = Context::create();
@@ -404,24 +380,24 @@ impl FunctionValue {
     /// let string_attribute = context.create_string_attribute("my_key", "my_val");
     /// let enum_attribute = context.create_enum_attribute(1, 1);
     ///
-    /// fn_value.add_attribute(0, string_attribute);
-    /// fn_value.add_attribute(0, enum_attribute);
+    /// fn_value.add_attribute(AttributeLoc::Return, string_attribute);
+    /// fn_value.add_attribute(AttributeLoc::Return, enum_attribute);
     ///
-    /// assert_eq!(fn_value.count_attributes(0), 2);
+    /// assert_eq!(fn_value.count_attributes(AttributeLoc::Return), 2);
     /// ```
-    #[llvm_versions(3.9 => latest)]
-    pub fn count_attributes(&self, index: u32) -> u32 {
+    #[llvm_versions(3.9..=latest)]
+    pub fn count_attributes(&self, loc: AttributeLoc) -> u32 {
         unsafe {
-            LLVMGetAttributeCountAtIndex(self.as_value_ref(), index)
+            LLVMGetAttributeCountAtIndex(self.as_value_ref(), loc.get_index())
         }
     }
 
-    /// Removes a string `Attribute` belonging this `FunctionValue` if index is 0,
-    /// otherwise to its parameter in the 1 - Nth position.
+    /// Removes a string `Attribute` belonging to the specified location in this `FunctionValue`.
     ///
     /// # Example
     ///
     /// ```no_run
+    /// use inkwell::attributes::AttributeLoc;
     /// use inkwell::context::Context;
     ///
     /// let context = Context::create();
@@ -431,22 +407,22 @@ impl FunctionValue {
     /// let fn_value = module.add_function("my_fn", fn_type, None);
     /// let string_attribute = context.create_string_attribute("my_key", "my_val");
     ///
-    /// fn_value.add_attribute(0, string_attribute);
-    /// fn_value.remove_string_attribute(0, "my_key");
+    /// fn_value.add_attribute(AttributeLoc::Return, string_attribute);
+    /// fn_value.remove_string_attribute(AttributeLoc::Return, "my_key");
     /// ```
-    #[llvm_versions(3.9 => latest)]
-    pub fn remove_string_attribute(&self, index: u32, key: &str) {
+    #[llvm_versions(3.9..=latest)]
+    pub fn remove_string_attribute(&self, loc: AttributeLoc, key: &str) {
         unsafe {
-            LLVMRemoveStringAttributeAtIndex(self.as_value_ref(), index, key.as_ptr() as *const i8, key.len() as u32)
+            LLVMRemoveStringAttributeAtIndex(self.as_value_ref(), loc.get_index(), key.as_ptr() as *const i8, key.len() as u32)
         }
     }
 
-    /// Removes an enum `Attribute` belonging to this `FunctionValue` if index is 0,
-    /// otherwise to its parameter in the 1 - Nth position.
+    /// Removes an enum `Attribute` belonging to the specified location in this `FunctionValue`.
     ///
     /// # Example
     ///
     /// ```no_run
+    /// use inkwell::attributes::AttributeLoc;
     /// use inkwell::context::Context;
     ///
     /// let context = Context::create();
@@ -456,22 +432,22 @@ impl FunctionValue {
     /// let fn_value = module.add_function("my_fn", fn_type, None);
     /// let enum_attribute = context.create_enum_attribute(1, 1);
     ///
-    /// fn_value.add_attribute(0, enum_attribute);
-    /// fn_value.remove_enum_attribute(0, 1);
+    /// fn_value.add_attribute(AttributeLoc::Return, enum_attribute);
+    /// fn_value.remove_enum_attribute(AttributeLoc::Return, 1);
     /// ```
-    #[llvm_versions(3.9 => latest)]
-    pub fn remove_enum_attribute(&self, index: u32, kind_id: u32) {
+    #[llvm_versions(3.9..=latest)]
+    pub fn remove_enum_attribute(&self, loc: AttributeLoc, kind_id: u32) {
         unsafe {
-            LLVMRemoveEnumAttributeAtIndex(self.as_value_ref(), index, kind_id)
+            LLVMRemoveEnumAttributeAtIndex(self.as_value_ref(), loc.get_index(), kind_id)
         }
     }
 
-    /// Gets an enum `Attribute` belonging to this `FunctionValue` if index is 0,
-    /// otherwise to its parameter in the 1 - Nth position.
+    /// Gets an enum `Attribute` belonging to the specified location in this `FunctionValue`.
     ///
     /// # Example
     ///
     /// ```no_run
+    /// use inkwell::attributes::AttributeLoc;
     /// use inkwell::context::Context;
     ///
     /// let context = Context::create();
@@ -481,15 +457,15 @@ impl FunctionValue {
     /// let fn_value = module.add_function("my_fn", fn_type, None);
     /// let enum_attribute = context.create_enum_attribute(1, 1);
     ///
-    /// fn_value.add_attribute(0, enum_attribute);
+    /// fn_value.add_attribute(AttributeLoc::Return, enum_attribute);
     ///
-    /// assert_eq!(fn_value.get_enum_attribute(0, 1), Some(enum_attribute));
+    /// assert_eq!(fn_value.get_enum_attribute(AttributeLoc::Return, 1), Some(enum_attribute));
     /// ```
     // SubTypes: -> Option<Attribute<Enum>>
-    #[llvm_versions(3.9 => latest)]
-    pub fn get_enum_attribute(&self, index: u32, kind_id: u32) -> Option<Attribute> {
+    #[llvm_versions(3.9..=latest)]
+    pub fn get_enum_attribute(&self, loc: AttributeLoc, kind_id: u32) -> Option<Attribute> {
         let ptr = unsafe {
-            LLVMGetEnumAttributeAtIndex(self.as_value_ref(), index, kind_id)
+            LLVMGetEnumAttributeAtIndex(self.as_value_ref(), loc.get_index(), kind_id)
         };
 
         if ptr.is_null() {
@@ -499,12 +475,12 @@ impl FunctionValue {
         Some(Attribute::new(ptr))
     }
 
-    /// Gets a string `Attribute` belonging this `FunctionValue` if index is 0,
-    /// otherwise to its parameter in the 1 - Nth position.
+    /// Gets a string `Attribute` belonging to the specified location in this `FunctionValue`.
     ///
     /// # Example
     ///
     /// ```no_run
+    /// use inkwell::attributes::AttributeLoc;
     /// use inkwell::context::Context;
     ///
     /// let context = Context::create();
@@ -514,15 +490,15 @@ impl FunctionValue {
     /// let fn_value = module.add_function("my_fn", fn_type, None);
     /// let string_attribute = context.create_string_attribute("my_key", "my_val");
     ///
-    /// fn_value.add_attribute(0, string_attribute);
+    /// fn_value.add_attribute(AttributeLoc::Return, string_attribute);
     ///
-    /// assert_eq!(fn_value.get_string_attribute(0, "my_key"), Some(string_attribute));
+    /// assert_eq!(fn_value.get_string_attribute(AttributeLoc::Return, "my_key"), Some(string_attribute));
     /// ```
     // SubTypes: -> Option<Attribute<String>>
-    #[llvm_versions(3.9 => latest)]
-    pub fn get_string_attribute(&self, index: u32, key: &str) -> Option<Attribute> {
+    #[llvm_versions(3.9..=latest)]
+    pub fn get_string_attribute(&self, loc: AttributeLoc, key: &str) -> Option<Attribute> {
         let ptr = unsafe {
-            LLVMGetStringAttributeAtIndex(self.as_value_ref(), index, key.as_ptr() as *const i8, key.len() as u32)
+            LLVMGetStringAttributeAtIndex(self.as_value_ref(), loc.get_index(), key.as_ptr() as *const i8, key.len() as u32)
         };
 
         if ptr.is_null() {

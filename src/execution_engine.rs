@@ -12,7 +12,7 @@ use std::rc::Rc;
 use std::ops::Deref;
 use std::ffi::CString;
 use std::fmt::{self, Debug, Display, Formatter};
-use std::mem::{forget, zeroed, transmute_copy, size_of};
+use std::mem::{forget, transmute_copy, size_of, MaybeUninit};
 
 static EE_INNER_PANIC: &str = "ExecutionEngineInner should exist until Drop";
 
@@ -22,17 +22,7 @@ pub enum FunctionLookupError {
     FunctionNotFound, // 404!
 }
 
-impl Error for FunctionLookupError {
-    // This method is deprecated on nighty so it's probably not
-    // something we should worry about
-    fn description(&self) -> &str {
-        self.as_str()
-    }
-
-    fn cause(&self) -> Option<&Error> {
-        None
-    }
-}
+impl Error for FunctionLookupError {}
 
 impl FunctionLookupError {
     fn as_str(&self) -> &str {
@@ -63,7 +53,7 @@ impl Error for RemoveModuleError {
         self.as_str()
     }
 
-    fn cause(&self) -> Option<&Error> {
+    fn cause(&self) -> Option<&dyn Error> {
         None
     }
 }
@@ -189,7 +179,7 @@ impl ExecutionEngine {
     ///
     /// assert_eq!(result, 128.);
     /// ```
-    pub fn add_global_mapping(&self, value: &AnyValue, addr: usize) {
+    pub fn add_global_mapping(&self, value: &dyn AnyValue, addr: usize) {
         unsafe {
             LLVMAddGlobalMapping(self.execution_engine_inner(), value.as_value_ref(), addr as *mut _)
         }
@@ -234,16 +224,19 @@ impl ExecutionEngine {
             _ => ()
         }
 
-        let mut new_module = unsafe { zeroed() };
-        let mut err_string = unsafe { zeroed() };
+        let mut new_module = MaybeUninit::uninit();
+        let mut err_string = MaybeUninit::uninit();
 
         let code = unsafe {
-            LLVMRemoveModule(self.execution_engine_inner(), module.module.get(), &mut new_module, &mut err_string)
+            LLVMRemoveModule(self.execution_engine_inner(), module.module.get(), new_module.as_mut_ptr(), err_string.as_mut_ptr())
         };
 
         if code == 1 {
-            return Err(RemoveModuleError::LLVMError(LLVMString::new(err_string)));
+            let err_str = unsafe { err_string.assume_init() };
+            return Err(RemoveModuleError::LLVMError(LLVMString::new(err_str)));
         }
+
+        let new_module = unsafe { new_module.assume_init() };
 
         module.module.set(new_module);
         *module.owned_by_ee.borrow_mut() = None;
@@ -265,7 +258,7 @@ impl ExecutionEngine {
     /// # Examples
     ///
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// # use inkwell::targets::{InitializationConfig, Target};
     /// # use inkwell::context::Context;
     /// # use inkwell::OptimizationLevel;
@@ -316,9 +309,9 @@ impl ExecutionEngine {
             return Err(FunctionLookupError::JITNotEnabled);
         }
 
-        // LLVMGetFunctionAddress segfaults in llvm 5.0 -> 7.0 when fn_name doesn't exist. This is a workaround
+        // LLVMGetFunctionAddress segfaults in llvm 5.0 -> 8.0 when fn_name doesn't exist. This is a workaround
         // to see if it exists and avoid the segfault when it doesn't
-        #[cfg(any(feature = "llvm5-0", feature = "llvm6-0", feature = "llvm7-0"))]
+        #[cfg(any(feature = "llvm5-0", feature = "llvm6-0", feature = "llvm7-0", feature = "llvm8-0"))]
         self.get_function_value(fn_name)?;
 
         let c_string = CString::new(fn_name).expect("Conversion to CString failed unexpectedly");
@@ -381,14 +374,16 @@ impl ExecutionEngine {
         }
 
         let c_string = CString::new(fn_name).expect("Conversion to CString failed unexpectedly");
-        let mut function = unsafe { zeroed() };
+        let mut function = MaybeUninit::uninit();
 
         let code = unsafe {
-            LLVMFindFunction(self.execution_engine_inner(), c_string.as_ptr(), &mut function)
+            LLVMFindFunction(self.execution_engine_inner(), c_string.as_ptr(), function.as_mut_ptr())
         };
 
         if code == 0 {
-            return FunctionValue::new(function).ok_or(FunctionLookupError::FunctionNotFound)
+            let fn_val = unsafe { function.assume_init() };
+
+            return FunctionValue::new(fn_val).ok_or(FunctionLookupError::FunctionNotFound)
         };
 
         Err(FunctionLookupError::FunctionNotFound)

@@ -1,5 +1,6 @@
 //! A value is an instance of a type.
 
+#[deny(missing_docs)]
 mod array_value;
 #[deny(missing_docs)]
 mod basic_value_use;
@@ -27,7 +28,7 @@ pub use crate::values::float_value::FloatValue;
 pub use crate::values::fn_value::FunctionValue;
 pub use crate::values::generic_value::GenericValue;
 pub use crate::values::global_value::GlobalValue;
-#[llvm_versions(7.0 => latest)]
+#[llvm_versions(7.0..=latest)]
 pub use crate::values::global_value::UnnamedAddress;
 pub use crate::values::instruction_value::{InstructionValue, InstructionOpcode};
 pub use crate::values::int_value::IntValue;
@@ -47,7 +48,7 @@ use std::fmt;
 
 use crate::support::LLVMString;
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Hash)]
 struct Value {
     value: LLVMValueRef,
 }

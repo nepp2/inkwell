@@ -11,7 +11,7 @@ use crate::values::{BasicValue, BasicValueEnum, InstructionValue, Value};
 // REVIEW: Metadata for phi values?
 /// A Phi Instruction returns a value based on which basic block branched into
 /// the Phi's containing basic block.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct PhiValue {
     phi_value: Value
 }
@@ -25,7 +25,7 @@ impl PhiValue {
         }
     }
 
-    pub fn add_incoming(&self, incoming: &[(&BasicValue, &BasicBlock)]) {
+    pub fn add_incoming(&self, incoming: &[(&dyn BasicValue, &BasicBlock)]) {
         let (mut values, mut basic_blocks): (Vec<LLVMValueRef>, Vec<LLVMBasicBlockRef>) = {
             incoming.iter()
                     .map(|&(v, bb)| (v.as_value_ref(), bb.basic_block))

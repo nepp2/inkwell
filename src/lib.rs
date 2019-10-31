@@ -16,11 +16,12 @@ extern crate libc;
 extern crate llvm_sys;
 #[macro_use]
 extern crate inkwell_internal_macros;
+#[macro_use]
+extern crate lazy_static;
 
 #[macro_use]
 pub mod support;
 #[deny(missing_docs)]
-#[cfg(not(any(feature = "llvm3-6", feature = "llvm3-7", feature = "llvm3-8")))]
 pub mod attributes;
 #[deny(missing_docs)]
 #[cfg(not(any(feature = "llvm3-6", feature = "llvm3-7", feature = "llvm3-8", feature = "llvm3-9",
@@ -42,7 +43,9 @@ pub mod targets;
 pub mod types;
 pub mod values;
 
-use llvm_sys::{LLVMIntPredicate, LLVMRealPredicate, LLVMVisibility, LLVMThreadLocalMode, LLVMDLLStorageClass, LLVMAtomicOrdering};
+use llvm_sys::{LLVMIntPredicate, LLVMRealPredicate, LLVMVisibility, LLVMThreadLocalMode, LLVMDLLStorageClass, LLVMAtomicOrdering, LLVMAtomicRMWBinOp};
+
+use std::convert::TryFrom;
 
 // Thanks to kennytm for coming up with assert_unique_features!
 // which ensures that the LLVM feature flags are mutually exclusive
@@ -73,13 +76,12 @@ macro_rules! assert_unique_used_features {
     }
 }
 
-assert_unique_used_features!{"llvm3-6", "llvm3-7", "llvm3-8", "llvm3-9", "llvm4-0", "llvm5-0", "llvm6-0", "llvm7-0"}
+assert_unique_used_features!{"llvm3-6", "llvm3-7", "llvm3-8", "llvm3-9", "llvm4-0", "llvm5-0", "llvm6-0", "llvm7-0", "llvm8-0"}
 
 /// Defines the address space in which a global will be inserted.
 ///
 /// # Remarks
 /// See also: https://llvm.org/doxygen/NVPTXBaseInfo_8h_source.html
-#[repr(u32)]
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum AddressSpace {
     Generic = 0,
@@ -89,96 +91,203 @@ pub enum AddressSpace {
     Local   = 5,
 }
 
-impl From<u32> for AddressSpace {
-    fn from(val: u32) -> Self {
+impl TryFrom<u32> for AddressSpace {
+    type Error = ();
+
+    fn try_from(val: u32) -> Result<Self, Self::Error> {
         match val {
-            0 => AddressSpace::Generic,
-            1 => AddressSpace::Global,
-            2 => AddressSpace::Shared,
-            3 => AddressSpace::Const,
-            4 => AddressSpace::Local,
-            _ => unreachable!("Invalid value for AddressSpace"),
+            0 => Ok(AddressSpace::Generic),
+            1 => Ok(AddressSpace::Global),
+            3 => Ok(AddressSpace::Shared),
+            4 => Ok(AddressSpace::Const),
+            5 => Ok(AddressSpace::Local),
+            _ => Err(()),
         }
     }
 }
 
 // REVIEW: Maybe this belongs in some sort of prelude?
-enum_rename!{
-    /// This enum defines how to compare a `left` and `right` `IntValue`.
-    IntPredicate <=> LLVMIntPredicate {
-        /// Equal
-        EQ <=> LLVMIntEQ,
-        /// Not Equal
-        NE <=> LLVMIntNE,
-        /// Unsigned Greater Than
-        UGT <=> LLVMIntUGT,
-        /// Unsigned Greater Than or Equal
-        UGE <=> LLVMIntUGE,
-        /// Unsigned Less Than
-        ULT <=> LLVMIntULT,
-        /// Unsigned Less Than or Equal
-        ULE <=> LLVMIntULE,
-        /// Signed Greater Than
-        SGT <=> LLVMIntSGT,
-        /// Signed Greater Than or Equal
-        SGE <=> LLVMIntSGE,
-        /// Signed Less Than
-        SLT <=> LLVMIntSLT,
-        /// Signed Less Than or Equal
-        SLE <=> LLVMIntSLE,
-    }
+/// This enum defines how to compare a `left` and `right` `IntValue`.
+#[llvm_enum(LLVMIntPredicate)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum IntPredicate {
+    /// Equal
+    #[llvm_variant(LLVMIntEQ)]
+    EQ,
+
+    /// Not Equal
+    #[llvm_variant(LLVMIntNE)]
+    NE,
+
+    /// Unsigned Greater Than
+    #[llvm_variant(LLVMIntUGT)]
+    UGT,
+
+    /// Unsigned Greater Than or Equal
+    #[llvm_variant(LLVMIntUGE)]
+    UGE,
+
+    /// Unsigned Less Than
+    #[llvm_variant(LLVMIntULT)]
+    ULT,
+
+    /// Unsigned Less Than or Equal
+    #[llvm_variant(LLVMIntULE)]
+    ULE,
+
+    /// Signed Greater Than
+    #[llvm_variant(LLVMIntSGT)]
+    SGT,
+
+    /// Signed Greater Than or Equal
+    #[llvm_variant(LLVMIntSGE)]
+    SGE,
+
+    /// Signed Less Than
+    #[llvm_variant(LLVMIntSLT)]
+    SLT,
+
+    /// Signed Less Than or Equal
+    #[llvm_variant(LLVMIntSLE)]
+    SLE,
 }
 
 // REVIEW: Maybe this belongs in some sort of prelude?
-enum_rename!{
-    /// Defines how to compare a `left` and `right` `FloatValue`.
-    FloatPredicate <=> LLVMRealPredicate {
-        /// Returns true if `left` == `right` and neither are NaN
-        OEQ <=> LLVMRealOEQ,
-        /// Returns true if `left` >= `right` and neither are NaN
-        OGE <=> LLVMRealOGE,
-        /// Returns true if `left` > `right` and neither are NaN
-        OGT <=> LLVMRealOGT,
-        /// Returns true if `left` <= `right` and neither are NaN
-        OLE <=> LLVMRealOLE,
-        /// Returns true if `left` < `right` and neither are NaN
-        OLT <=> LLVMRealOLT,
-        /// Returns true if `left` != `right` and neither are NaN
-        ONE <=> LLVMRealONE,
-        /// Returns true if neither value is NaN
-        ORD <=> LLVMRealORD,
-        /// Always returns false
-        PredicateFalse <=> LLVMRealPredicateFalse,
-        /// Always returns true
-        PredicateTrue <=> LLVMRealPredicateTrue,
-        /// Returns true if `left` == `right` or either is NaN
-        UEQ <=> LLVMRealUEQ,
-        /// Returns true if `left` >= `right` or either is NaN
-        UGE <=> LLVMRealUGE,
-        /// Returns true if `left` > `right` or either is NaN
-        UGT <=> LLVMRealUGT,
-        /// Returns true if `left` <= `right` or either is NaN
-        ULE <=> LLVMRealULE,
-        /// Returns true if `left` < `right` or either is NaN
-        ULT <=> LLVMRealULT,
-        /// Returns true if `left` != `right` or either is NaN
-        UNE <=> LLVMRealUNE,
-        /// Returns true if either value is NaN
-        UNO <=> LLVMRealUNO,
-    }
+/// Defines how to compare a `left` and `right` `FloatValue`.
+#[llvm_enum(LLVMRealPredicate)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FloatPredicate {
+    /// Returns true if `left` == `right` and neither are NaN
+    #[llvm_variant(LLVMRealOEQ)]
+    OEQ,
+
+    /// Returns true if `left` >= `right` and neither are NaN
+    #[llvm_variant(LLVMRealOGE)]
+    OGE,
+
+    /// Returns true if `left` > `right` and neither are NaN
+    #[llvm_variant(LLVMRealOGT)]
+    OGT,
+
+    /// Returns true if `left` <= `right` and neither are NaN
+    #[llvm_variant(LLVMRealOLE)]
+    OLE,
+
+    /// Returns true if `left` < `right` and neither are NaN
+    #[llvm_variant(LLVMRealOLT)]
+    OLT,
+
+    /// Returns true if `left` != `right` and neither are NaN
+    #[llvm_variant(LLVMRealONE)]
+    ONE,
+
+    /// Returns true if neither value is NaN
+    #[llvm_variant(LLVMRealORD)]
+    ORD,
+
+    /// Always returns false
+    #[llvm_variant(LLVMRealPredicateFalse)]
+    PredicateFalse,
+
+    /// Always returns true
+    #[llvm_variant(LLVMRealPredicateTrue)]
+    PredicateTrue,
+
+    /// Returns true if `left` == `right` or either is NaN
+    #[llvm_variant(LLVMRealUEQ)]
+    UEQ,
+
+    /// Returns true if `left` >= `right` or either is NaN
+    #[llvm_variant(LLVMRealUGE)]
+    UGE,
+
+    /// Returns true if `left` > `right` or either is NaN
+    #[llvm_variant(LLVMRealUGT)]
+    UGT,
+
+    /// Returns true if `left` <= `right` or either is NaN
+    #[llvm_variant(LLVMRealULE)]
+    ULE,
+
+    /// Returns true if `left` < `right` or either is NaN
+    #[llvm_variant(LLVMRealULT)]
+    ULT,
+
+    /// Returns true if `left` != `right` or either is NaN
+    #[llvm_variant(LLVMRealUNE)]
+    UNE,
+
+    /// Returns true if either value is NaN
+    #[llvm_variant(LLVMRealUNO)]
+    UNO,
 }
 
 // REVIEW: Maybe this belongs in some sort of prelude?
-enum_rename!{
-    AtomicOrdering <=> LLVMAtomicOrdering {
-        NotAtomic <=> LLVMAtomicOrderingNotAtomic,
-        Unordered <=> LLVMAtomicOrderingUnordered,
-        Monotonic <=> LLVMAtomicOrderingMonotonic,
-        Acquire <=> LLVMAtomicOrderingAcquire,
-        Release <=> LLVMAtomicOrderingRelease,
-        AcquireRelease <=> LLVMAtomicOrderingAcquireRelease,
-        SequentiallyConsistent <=> LLVMAtomicOrderingSequentiallyConsistent,
-    }
+#[llvm_enum(LLVMAtomicOrdering)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AtomicOrdering {
+    #[llvm_variant(LLVMAtomicOrderingNotAtomic)]
+    NotAtomic,
+    #[llvm_variant(LLVMAtomicOrderingUnordered)]
+    Unordered,
+    #[llvm_variant(LLVMAtomicOrderingMonotonic)]
+    Monotonic,
+    #[llvm_variant(LLVMAtomicOrderingAcquire)]
+    Acquire,
+    #[llvm_variant(LLVMAtomicOrderingRelease)]
+    Release,
+    #[llvm_variant(LLVMAtomicOrderingAcquireRelease)]
+    AcquireRelease,
+    #[llvm_variant(LLVMAtomicOrderingSequentiallyConsistent)]
+    SequentiallyConsistent,
+}
+
+#[llvm_enum(LLVMAtomicRMWBinOp)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AtomicRMWBinOp {
+    /// Stores to memory and returns the prior value.
+    #[llvm_variant(LLVMAtomicRMWBinOpXchg)]
+    Xchg,
+
+    /// Adds to the value in memory and returns the prior value.
+    #[llvm_variant(LLVMAtomicRMWBinOpAdd)]
+    Add,
+
+    /// Subtract a value off the value in memory and returns the prior value.
+    #[llvm_variant(LLVMAtomicRMWBinOpSub)]
+    Sub,
+
+    /// Bitwise and into memory and returns the prior value.
+    #[llvm_variant(LLVMAtomicRMWBinOpAnd)]
+    And,
+
+    /// Bitwise nands into memory and returns the prior value.
+    #[llvm_variant(LLVMAtomicRMWBinOpNand)]
+    Nand,
+
+    /// Bitwise ors into memory and returns the prior value.
+    #[llvm_variant(LLVMAtomicRMWBinOpOr)]
+    Or,
+
+    /// Bitwise xors into memory and returns the prior value.
+    #[llvm_variant(LLVMAtomicRMWBinOpXor)]
+    Xor,
+
+    /// Sets memory to the signed-greater of the value provided and the value in memory. Returns the value that was in memory.
+    #[llvm_variant(LLVMAtomicRMWBinOpMax)]
+    Max,
+
+    /// Sets memory to the signed-lesser of the value provided and the value in memory. Returns the value that was in memory.
+    #[llvm_variant(LLVMAtomicRMWBinOpMin)]
+    Min,
+
+    /// Sets memory to the unsigned-greater of the value provided and the value in memory. Returns the value that was in memory.
+    #[llvm_variant(LLVMAtomicRMWBinOpUMax)]
+    UMax,
+
+    /// Sets memory to the unsigned-lesser of the value provided and the value in memory. Returns the value that was in memory.
+    #[llvm_variant(LLVMAtomicRMWBinOpUMin)]
+    UMin,
 }
 
 /// Defines the optimization level used to compile a `Module`.

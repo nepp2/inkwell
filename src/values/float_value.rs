@@ -9,7 +9,7 @@ use crate::types::{AsTypeRef, FloatType, IntType};
 use crate::values::traits::AsValueRef;
 use crate::values::{InstructionValue, IntValue, Value, MetadataValue};
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct FloatValue {
     float_value: Value
 }
@@ -158,7 +158,7 @@ impl FloatValue {
     // SubType: rhs same as lhs; return IntValue<bool>
     pub fn const_compare(&self, op: FloatPredicate, rhs: FloatValue) -> IntValue {
         let value = unsafe {
-            LLVMConstFCmp(op.as_llvm_enum(), self.as_value_ref(), rhs.as_value_ref())
+            LLVMConstFCmp(op.into(), self.as_value_ref(), rhs.as_value_ref())
         };
 
         IntValue::new(value)

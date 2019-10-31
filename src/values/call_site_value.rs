@@ -3,17 +3,18 @@ use llvm_sys::LLVMTypeKind;
 use llvm_sys::core::{LLVMIsTailCall, LLVMSetTailCall, LLVMGetTypeKind, LLVMTypeOf, LLVMSetInstructionCallConv, LLVMGetInstructionCallConv, LLVMSetInstrParamAlignment};
 use llvm_sys::prelude::LLVMValueRef;
 
-#[llvm_versions(3.9 => latest)]
-use crate::attributes::Attribute;
+#[llvm_versions(3.9..=latest)]
+use crate::attributes::{Attribute};
+use crate::attributes::AttributeLoc;
 use crate::support::LLVMString;
 use crate::values::{AsValueRef, BasicValueEnum, InstructionValue, Value};
-#[llvm_versions(3.9 => latest)]
+#[llvm_versions(3.9..=latest)]
 use crate::values::FunctionValue;
 
 /// A value resulting from a function call. It may have function attributes applied to it.
 ///
 /// This struct may be removed in the future in favor of an `InstructionValue<CallSite>` type.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy, Hash)]
 pub struct CallSiteValue(Value);
 
 impl CallSiteValue {
@@ -112,6 +113,7 @@ impl CallSiteValue {
     /// # Example
     ///
     /// ```no_run
+    /// use inkwell::attributes::AttributeLoc;
     /// use inkwell::context::Context;
     ///
     /// let context = Context::create();
@@ -128,15 +130,15 @@ impl CallSiteValue {
     ///
     /// let call_site_value = builder.build_call(fn_value, &[], "my_fn");
     ///
-    /// call_site_value.add_attribute(0, string_attribute);
-    /// call_site_value.add_attribute(0, enum_attribute);
+    /// call_site_value.add_attribute(AttributeLoc::Return, string_attribute);
+    /// call_site_value.add_attribute(AttributeLoc::Return, enum_attribute);
     /// ```
-    #[llvm_versions(3.9 => latest)]
-    pub fn add_attribute(&self, index: u32, attribute: Attribute) {
+    #[llvm_versions(3.9..=latest)]
+    pub fn add_attribute(&self, loc: AttributeLoc, attribute: Attribute) {
         use llvm_sys::core::LLVMAddCallSiteAttribute;
 
         unsafe {
-            LLVMAddCallSiteAttribute(self.as_value_ref(), index, attribute.attribute)
+            LLVMAddCallSiteAttribute(self.as_value_ref(), loc.get_index(), attribute.attribute)
         }
     }
 
@@ -163,7 +165,7 @@ impl CallSiteValue {
     ///
     /// assert_eq!(call_site_value.get_called_fn_value(), fn_value);
     /// ```
-    #[llvm_versions(3.9 => latest)]
+    #[llvm_versions(3.9..=latest)]
     pub fn get_called_fn_value(&self) -> FunctionValue {
         use llvm_sys::core::LLVMGetCalledValue;
 
@@ -179,6 +181,7 @@ impl CallSiteValue {
     /// # Example
     ///
     /// ```no_run
+    /// use inkwell::attributes::AttributeLoc;
     /// use inkwell::context::Context;
     ///
     /// let context = Context::create();
@@ -195,17 +198,17 @@ impl CallSiteValue {
     ///
     /// let call_site_value = builder.build_call(fn_value, &[], "my_fn");
     ///
-    /// call_site_value.add_attribute(0, string_attribute);
-    /// call_site_value.add_attribute(0, enum_attribute);
+    /// call_site_value.add_attribute(AttributeLoc::Return, string_attribute);
+    /// call_site_value.add_attribute(AttributeLoc::Return, enum_attribute);
     ///
-    /// assert_eq!(call_site_value.count_attributes(0), 2);
+    /// assert_eq!(call_site_value.count_attributes(AttributeLoc::Return), 2);
     /// ```
-    #[llvm_versions(3.9 => latest)]
-    pub fn count_attributes(&self, index: u32) -> u32 {
+    #[llvm_versions(3.9..=latest)]
+    pub fn count_attributes(&self, loc: AttributeLoc) -> u32 {
         use llvm_sys::core::LLVMGetCallSiteAttributeCount;
 
         unsafe {
-            LLVMGetCallSiteAttributeCount(self.as_value_ref(), index)
+            LLVMGetCallSiteAttributeCount(self.as_value_ref(), loc.get_index())
         }
     }
 
@@ -214,6 +217,7 @@ impl CallSiteValue {
     /// # Example
     ///
     /// ```no_run
+    /// use inkwell::attributes::AttributeLoc;
     /// use inkwell::context::Context;
     ///
     /// let context = Context::create();
@@ -230,18 +234,18 @@ impl CallSiteValue {
     ///
     /// let call_site_value = builder.build_call(fn_value, &[], "my_fn");
     ///
-    /// call_site_value.add_attribute(0, string_attribute);
-    /// call_site_value.add_attribute(0, enum_attribute);
+    /// call_site_value.add_attribute(AttributeLoc::Return, string_attribute);
+    /// call_site_value.add_attribute(AttributeLoc::Return, enum_attribute);
     ///
-    /// assert_eq!(call_site_value.get_enum_attribute(0, 1).unwrap(), enum_attribute);
+    /// assert_eq!(call_site_value.get_enum_attribute(AttributeLoc::Return, 1).unwrap(), enum_attribute);
     /// ```
     // SubTypes: -> Attribute<Enum>
-    #[llvm_versions(3.9 => latest)]
-    pub fn get_enum_attribute(&self, index: u32, kind_id: u32) -> Option<Attribute> {
+    #[llvm_versions(3.9..=latest)]
+    pub fn get_enum_attribute(&self, loc: AttributeLoc, kind_id: u32) -> Option<Attribute> {
         use llvm_sys::core::LLVMGetCallSiteEnumAttribute;
 
         let ptr = unsafe {
-            LLVMGetCallSiteEnumAttribute(self.as_value_ref(), index, kind_id)
+            LLVMGetCallSiteEnumAttribute(self.as_value_ref(), loc.get_index(), kind_id)
         };
 
         if ptr.is_null() {
@@ -256,6 +260,7 @@ impl CallSiteValue {
     /// # Example
     ///
     /// ```no_run
+    /// use inkwell::attributes::AttributeLoc;
     /// use inkwell::context::Context;
     ///
     /// let context = Context::create();
@@ -272,18 +277,18 @@ impl CallSiteValue {
     ///
     /// let call_site_value = builder.build_call(fn_value, &[], "my_fn");
     ///
-    /// call_site_value.add_attribute(0, string_attribute);
-    /// call_site_value.add_attribute(0, enum_attribute);
+    /// call_site_value.add_attribute(AttributeLoc::Return, string_attribute);
+    /// call_site_value.add_attribute(AttributeLoc::Return, enum_attribute);
     ///
-    /// assert_eq!(call_site_value.get_string_attribute(0, "my_key").unwrap(), string_attribute);
+    /// assert_eq!(call_site_value.get_string_attribute(AttributeLoc::Return, "my_key").unwrap(), string_attribute);
     /// ```
     // SubTypes: -> Attribute<String>
-    #[llvm_versions(3.9 => latest)]
-    pub fn get_string_attribute(&self, index: u32, key: &str) -> Option<Attribute> {
+    #[llvm_versions(3.9..=latest)]
+    pub fn get_string_attribute(&self, loc: AttributeLoc, key: &str) -> Option<Attribute> {
         use llvm_sys::core::LLVMGetCallSiteStringAttribute;
 
         let ptr = unsafe {
-            LLVMGetCallSiteStringAttribute(self.as_value_ref(), index, key.as_ptr() as *const i8, key.len() as u32)
+            LLVMGetCallSiteStringAttribute(self.as_value_ref(), loc.get_index(), key.as_ptr() as *const i8, key.len() as u32)
         };
 
         if ptr.is_null() {
@@ -298,6 +303,7 @@ impl CallSiteValue {
     /// # Example
     ///
     /// ```no_run
+    /// use inkwell::attributes::AttributeLoc;
     /// use inkwell::context::Context;
     ///
     /// let context = Context::create();
@@ -314,18 +320,18 @@ impl CallSiteValue {
     ///
     /// let call_site_value = builder.build_call(fn_value, &[], "my_fn");
     ///
-    /// call_site_value.add_attribute(0, string_attribute);
-    /// call_site_value.add_attribute(0, enum_attribute);
-    /// call_site_value.remove_enum_attribute(0, 1);
+    /// call_site_value.add_attribute(AttributeLoc::Return, string_attribute);
+    /// call_site_value.add_attribute(AttributeLoc::Return, enum_attribute);
+    /// call_site_value.remove_enum_attribute(AttributeLoc::Return, 1);
     ///
-    /// assert_eq!(call_site_value.get_enum_attribute(0, 1), None);
+    /// assert_eq!(call_site_value.get_enum_attribute(AttributeLoc::Return, 1), None);
     /// ```
-    #[llvm_versions(3.9 => latest)]
-    pub fn remove_enum_attribute(&self, index: u32, kind_id: u32) {
+    #[llvm_versions(3.9..=latest)]
+    pub fn remove_enum_attribute(&self, loc: AttributeLoc, kind_id: u32) {
         use llvm_sys::core::LLVMRemoveCallSiteEnumAttribute;
 
         unsafe {
-            LLVMRemoveCallSiteEnumAttribute(self.as_value_ref(), index, kind_id)
+            LLVMRemoveCallSiteEnumAttribute(self.as_value_ref(), loc.get_index(), kind_id)
         }
     }
 
@@ -334,6 +340,7 @@ impl CallSiteValue {
     /// # Example
     ///
     /// ```no_run
+    /// use inkwell::attributes::AttributeLoc;
     /// use inkwell::context::Context;
     ///
     /// let context = Context::create();
@@ -350,18 +357,18 @@ impl CallSiteValue {
     ///
     /// let call_site_value = builder.build_call(fn_value, &[], "my_fn");
     ///
-    /// call_site_value.add_attribute(0, string_attribute);
-    /// call_site_value.add_attribute(0, enum_attribute);
-    /// call_site_value.remove_string_attribute(0, "my_key");
+    /// call_site_value.add_attribute(AttributeLoc::Return, string_attribute);
+    /// call_site_value.add_attribute(AttributeLoc::Return, enum_attribute);
+    /// call_site_value.remove_string_attribute(AttributeLoc::Return, "my_key");
     ///
-    /// assert_eq!(call_site_value.get_string_attribute(0, "my_key"), None);
+    /// assert_eq!(call_site_value.get_string_attribute(AttributeLoc::Return, "my_key"), None);
     /// ```
-    #[llvm_versions(3.9 => latest)]
-    pub fn remove_string_attribute(&self, index: u32, key: &str) {
+    #[llvm_versions(3.9..=latest)]
+    pub fn remove_string_attribute(&self, loc: AttributeLoc, key: &str) {
         use llvm_sys::core::LLVMRemoveCallSiteStringAttribute;
 
         unsafe {
-            LLVMRemoveCallSiteStringAttribute(self.as_value_ref(), index, key.as_ptr() as *const i8, key.len() as u32)
+            LLVMRemoveCallSiteStringAttribute(self.as_value_ref(), loc.get_index(), key.as_ptr() as *const i8, key.len() as u32)
         }
     }
 
@@ -370,6 +377,7 @@ impl CallSiteValue {
     /// # Example
     ///
     /// ```no_run
+    /// use inkwell::attributes::AttributeLoc;
     /// use inkwell::context::Context;
     ///
     /// let context = Context::create();
@@ -388,7 +396,7 @@ impl CallSiteValue {
     ///
     /// assert_eq!(call_site_value.count_arguments(), 0);
     /// ```
-    #[llvm_versions(3.9 => latest)]
+    #[llvm_versions(3.9..=latest)]
     pub fn count_arguments(&self) -> u32 {
         use llvm_sys::core::LLVMGetNumArgOperands;
 
@@ -455,9 +463,14 @@ impl CallSiteValue {
 
     /// Shortcut for setting the alignment `Attribute` for this `CallSiteValue`.
     ///
+    /// # Panics
+    ///
+    /// When the alignment is not a power of 2.
+    ///
     /// # Example
     ///
     /// ```no_run
+    /// use inkwell::attributes::AttributeLoc;
     /// use inkwell::context::Context;
     ///
     /// let context = Context::create();
@@ -472,11 +485,13 @@ impl CallSiteValue {
     ///
     /// let call_site_value = builder.build_call(fn_value, &[], "my_fn");
     ///
-    /// call_site_value.set_param_alignment_attribute(0, 2);
+    /// call_site_value.set_alignment_attribute(AttributeLoc::Param(0), 2);
     /// ```
-    pub fn set_param_alignment_attribute(&self, index: u32, alignment: u32) {
+    pub fn set_alignment_attribute(&self, loc: AttributeLoc, alignment: u32) {
+        assert_eq!(alignment.count_ones(), 1, "Alignment must be a power of two.");
+
         unsafe {
-            LLVMSetInstrParamAlignment(self.as_value_ref(), index, alignment)
+            LLVMSetInstrParamAlignment(self.as_value_ref(), loc.get_index(), alignment)
         }
     }
 

@@ -1,7 +1,9 @@
 use llvm_sys::prelude::LLVMTypeRef;
 
+use std::convert::TryFrom;
 use std::fmt::Debug;
 
+use crate::AddressSpace;
 use crate::types::{IntType, FunctionType, FloatType, PointerType, StructType, ArrayType, VectorType, VoidType, Type};
 use crate::types::enums::{AnyTypeEnum, BasicTypeEnum};
 use crate::values::{IntMathValue, FloatMathValue, PointerMathValue, IntValue, FloatValue, PointerValue, VectorValue};
@@ -37,9 +39,56 @@ pub trait BasicType: AnyType {
         BasicTypeEnum::new(self.as_type_ref())
     }
 
-    /// Create a function type from this `BasicType`.
+    /// Create a `FunctionType` with this `BasicType` as its return type.
+    ///
+    /// Example:
+    /// ```no_run
+    /// use inkwell::context::Context;
+    /// use inkwell::types::BasicType;
+    ///
+    /// let context = Context::create();
+    /// let int = context.i32_type();
+    /// let int_basic_type = int.as_basic_type_enum();
+    /// assert_eq!(int_basic_type.fn_type(&[], false), int.fn_type(&[], false));
+    /// ```
     fn fn_type(&self, param_types: &[BasicTypeEnum], is_var_args: bool) -> FunctionType {
         Type::new(self.as_type_ref()).fn_type(param_types, is_var_args)
+    }
+
+    /// Create an `ArrayType` with this `BasicType` as its elements.
+    ///
+    /// Example:
+    /// ```no_run
+    /// use inkwell::context::Context;
+    /// use inkwell::types::BasicType;
+    ///
+    /// let context = Context::create();
+    /// let int = context.i32_type();
+    /// let int_basic_type = int.as_basic_type_enum();
+    /// assert_eq!(int_basic_type.array_type(32), int.array_type(32));
+    /// ```
+    // FIXME: We shouldn't be able to create arrays of void types
+    fn array_type(&self, size: u32) -> ArrayType {
+        Type::new(self.as_type_ref()).array_type(size)
+    }
+
+    /// Create a `PointerType` that points to this `BasicType`.
+    ///
+    /// Example:
+    /// ```no_run
+    /// use inkwell::context::Context;
+    /// use inkwell::types::BasicType;
+    /// use inkwell::AddressSpace;
+    ///
+    /// let context = Context::create();
+    /// let int = context.i32_type();
+    /// let int_basic_type = int.as_basic_type_enum();
+    /// let addr_space = AddressSpace::Generic;
+    /// assert_eq!(int_basic_type.ptr_type(addr_space), int.ptr_type(addr_space));
+    /// ```
+    // FIXME: We shouldn't be able to create pointer of void types
+    fn ptr_type(&self, address_space: AddressSpace) -> PointerType {
+        Type::new(self.as_type_ref()).ptr_type(address_space)
     }
 }
 
@@ -103,3 +152,25 @@ impl PointerMathType for VectorType {
     type ValueType = VectorValue;
     type PtrConvType = VectorType;
 }
+
+macro_rules! impl_try_from_basic_type_enum {
+    ($type_name:ident) => (
+        impl TryFrom<BasicTypeEnum> for $type_name {
+            type Error = &'static str;
+
+            fn try_from(ty: BasicTypeEnum) -> Result<Self, Self::Error> {
+                match ty {
+                    BasicTypeEnum::$type_name(ty) => Ok(ty),
+                    _ => Err("bad try from"),
+                }
+            }
+        }
+    )
+}
+
+impl_try_from_basic_type_enum!(ArrayType);
+impl_try_from_basic_type_enum!(FloatType);
+impl_try_from_basic_type_enum!(IntType);
+impl_try_from_basic_type_enum!(PointerType);
+impl_try_from_basic_type_enum!(StructType);
+impl_try_from_basic_type_enum!(VectorType);
